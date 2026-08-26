@@ -15,6 +15,36 @@ the same credentials — the failure is almost always visible in one glance.
 
 ---
 
+## "Access Denied" with a Ray ID
+
+```
+Title: Access Denied
+You are not authorized to access this webpage.
+Ray ID: a3166fa2ad6ae1fa
+```
+
+Cloudflare blocked the browser before SRP ever saw the request — note the Ray
+ID, which is Cloudflare's, not SRP's. Nothing in your account or credentials is
+involved.
+
+The client already counters this with a realistic desktop fingerprint set in
+`start()` and the `USER_AGENT` / `_STEALTH_INIT_SCRIPT` constants in
+`srp_energy/client.py`: a current Chrome user agent, a 1440×900 viewport,
+`America/Phoenix`, `--disable-blink-features=AutomationControlled`, and an init
+script that removes the `navigator.webdriver` giveaway. If Cloudflare tightens
+its rules, that is the code to update — start by bumping `USER_AGENT` to a
+current Chrome version, since a stale one is the usual first trigger.
+
+A quick way to confirm this is what you are hitting:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' https://myaccount.srpnet.com/power
+```
+
+A `403` there is normal even when the scraper works (curl sends no browser
+fingerprint at all), so use it only to confirm the site is reachable, not as a
+health check.
+
 ## `SRP login failed`
 
 ```
@@ -36,6 +66,12 @@ In rough order of likelihood:
 3. **SRP renamed the login fields.** Run headed, inspect the username input,
    and add its selector to `USERNAME_SELECTORS` / `PASSWORD_SELECTORS` in
    `srp_energy/client.py`. They are ordered tuples — put the working one first.
+
+   Be aware the login page ships **two copies of the form**: a visible
+   lowercase `username` / `password` pair, and a hidden capitalised
+   `UserName` / `Password` pair (`#txtUserName` / `#txtPassword`). `_fill_first`
+   skips anything not visible, because filling a hidden field succeeds silently
+   and then submits an empty form. If you add a selector, keep that check.
 4. **A consent banner or interstitial is covering the form.** SRP has added
    these before. Dismiss it in `login()` before filling fields.
 

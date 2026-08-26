@@ -26,6 +26,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import AsyncIterator, Sequence
+from urllib.parse import urlparse
 
 from .models import PeakDemandObservation, Series
 
@@ -37,15 +38,48 @@ USAGE_URL = f"{BASE_URL}/myaccount/usage"
 # nothing, since its markup has proven less stable.
 DASHBOARD_URL = f"{BASE_URL}/MyAccount/Dashboard"
 
-# SRP has served both a generic and a "desktop"-suffixed login form.
-USERNAME_SELECTORS = ('input[name="username"]', "input#username_desktop", 'input[type="email"]')
-PASSWORD_SELECTORS = ('input[name="password"]', "input#password_desktop", 'input[type="password"]')
+# The login page ships TWO copies of the form -- a lowercase-named pair that is
+# visible on desktop widths, and a capitalised `UserName`/`Password` pair that
+# is present but hidden. Both are in the DOM at once, so selectors are tried in
+# visibility order and hidden matches are skipped (see `_fill_first`).
+USERNAME_SELECTORS = (
+    'input[name="username"]',
+    "input#username_desktop",
+    'input[name="UserName"]',
+    "input#txtUserName",
+    'input[type="email"]',
+)
+PASSWORD_SELECTORS = (
+    'input[name="password"]',
+    "input#password_desktop",
+    'input[name="Password"]',
+    "input#txtPassword",
+    'input[type="password"]',
+)
 SUBMIT_SELECTORS = (
     'button[type="submit"]',
+    "#loginSubmit",
     'button:has-text("Sign in")',
     'button:has-text("Log in")',
     'input[type="submit"]',
 )
+
+# Cloudflare fronts the SRP portal and blocks a default Playwright browser
+# outright ("Access Denied" with a Ray ID) before any markup is served. A
+# realistic fingerprint -- real user agent, desktop viewport, Arizona timezone,
+# and no `navigator.webdriver` giveaway -- is required just to reach the login
+# page. This is presentation, not evasion of an access control: the scraper
+# still signs in with the account holder's own credentials.
+USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/140.0.0.0 Safari/537.36"
+)
+_STEALTH_INIT_SCRIPT = """
+Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
+window.chrome = window.chrome || { runtime: {} };
+"""
 
 EXPORT_SELECTORS = (
     'button:has-text("Export to Excel")',
@@ -184,9 +218,21 @@ class SRPClient:
         self._browser = await self._playwright.chromium.launch(
             headless=self.headless,
             slow_mo=self.slow_mo_ms,
-            args=["--no-sandbox", "--disable-setuid-sandbox"],
+            args=[
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                # Without this Cloudflare rejects the session before SRP sees it.
+                "--disable-blink-features=AutomationControlled",
+            ],
         )
-        self._context = await self._browser.new_context(accept_downloads=True)
+        self._context = await self._browser.new_context(
+            accept_downloads=True,
+            user_agent=USER_AGENT,
+            viewport={"width": 1440, "height": 900},
+            locale="en-US",
+            timezone_id="America/Phoenix",
+        )
+        await self._context.add_init_script(_STEALTH_INIT_SCRIPT)
         self._page = await self._context.new_page()
         self._page.set_default_timeout(self.timeout_ms)
 
@@ -228,11 +274,17 @@ class SRPClient:
         """
         for selector in selectors:
             element = await self.page.query_selector(selector)
-            if element is not None:
-                await element.fill(value)
-                logger.debug("filled %s using %s", what, selector)
-                return selector
-        raise LoginError(f"could not find the {what} field (tried: {', '.join(selectors)})")
+            # The page carries hidden duplicates of every login field. Filling
+            # one of those succeeds silently and submits an empty form, so a
+            # match only counts if the user can actually see it.
+            if element is None or not await element.is_visible():
+                continue
+            await element.fill(value)
+            logger.debug("filled %s using %s", what, selector)
+            return selector
+        raise LoginError(
+            f"could not find a visible {what} field (tried: {', '.join(selectors)})"
+        )
 
     async def login(self, *, force: bool = False) -> None:
         """Establish a session, reusing a recent one unless ``force``."""
@@ -261,7 +313,7 @@ class SRPClient:
         if not self._looks_authenticated(self.page.url):
             for selector in SUBMIT_SELECTORS:
                 button = await self.page.query_selector(selector)
-                if button is not None:
+                if button is not None and await button.is_visible():
                     await button.click()
                     await asyncio.sleep(5)
                     break
@@ -278,10 +330,17 @@ class SRPClient:
 
     @staticmethod
     def _looks_authenticated(url: str) -> bool:
-        lowered = url.lower()
-        if "login" in lowered or "signin" in lowered:
+        """Decide from the URL whether we are past the login wall.
+
+        Only the *path* is examined. The portal's hostname is literally
+        ``myaccount.srpnet.com``, so matching against the whole URL made every
+        page on the site look authenticated -- including the login page --
+        and the scraper would skip login entirely and then fail to find data.
+        """
+        path = urlparse(url).path.lower()
+        if "login" in path or "signin" in path:
             return False
-        return any(token in lowered for token in ("dashboard", "myaccount", "usage"))
+        return any(token in path for token in ("dashboard", "myaccount", "usage"))
 
     async def _ensure_usage_page(self) -> None:
         await self.login()

@@ -183,6 +183,7 @@ The design point is that **only `client.py` touches a browser**. Parsing, storag
 
 ## Known limitations
 
+- **Cloudflare fronts the portal.** A default Playwright browser is refused outright with an "Access Denied / Ray ID" page before SRP serves any markup. The client therefore presents a realistic desktop fingerprint (real user agent, 1440×900 viewport, `America/Phoenix` timezone, no `navigator.webdriver` flag). This is presentation, not evasion of an access control — the scraper still signs in with your own credentials to read your own data. If Cloudflare tightens further, this is the first thing that will break.
 - **No date-range selection.** SRP's export gives you whatever window the portal is showing, typically the last ~31 days. There is no way to request an arbitrary historical range, so deep history has to be accumulated by fetching regularly. If you have old exports, `srp-energy-monitor import` will backfill them.
 - **No MFA support.** See above.
 - **Single account.** If your login has multiple SRP accounts or meters, the scraper takes whichever the portal defaults to.
