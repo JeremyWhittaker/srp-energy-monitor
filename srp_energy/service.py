@@ -77,8 +77,16 @@ async def fetch_and_store(
     )
 
     try:
-        await client.start()
-        await client.login()
+        try:
+            await client.start()
+            await client.login()
+        except Exception as exc:
+            # Login is the most common real-world failure (bad credentials, MFA,
+            # or an SRP markup change). Report it like any other stage rather
+            # than letting a traceback escape to the CLI.
+            logger.error("could not establish an SRP session: %s", exc)
+            result.errors.append(f"login: {exc}")
+            return result
 
         if include_peak_demand:
             try:
@@ -135,6 +143,12 @@ def import_directory(store: Store, directory: str | Path) -> tuple[int, list[str
     Returns ``(rows_written, errors)``. Existing rows are updated in place, so
     importing the same directory twice is a no-op rather than a duplication.
     """
+    directory = Path(directory)
+    if not directory.is_dir():
+        # Path.glob on a missing directory yields nothing rather than raising,
+        # so without this a typo'd path reports a successful no-op import.
+        return 0, [f"{directory}: not a directory"]
+
     written = 0
     errors: list[str] = []
     for path, series in iter_downloads(directory):

@@ -179,7 +179,7 @@ def _fmt(value: float | None, places: int = 2) -> str:
 
 
 def _cmd_export(args: argparse.Namespace, settings: Settings, store: Store) -> int:
-    start = date.today() - timedelta(days=args.days) if args.days else None
+    start = date.today() - timedelta(days=args.days) if args.days is not None else None
     rows = store.readings(
         series=Series.parse(args.series) if args.series else None, start=start
     )
@@ -214,10 +214,11 @@ def _cmd_import(args: argparse.Namespace, settings: Settings, store: Store) -> i
     from .service import import_directory
 
     written, errors = import_directory(store, args.directory)
+    if errors:
+        for error in errors:
+            print(f"  ! {error}", file=sys.stderr)
     print(f"Imported {written} readings from {args.directory}")
-    for error in errors:
-        print(f"  ! {error}", file=sys.stderr)
-    return 0 if written or not errors else 1
+    return 0 if not errors else 1
 
 
 _COMMANDS = {

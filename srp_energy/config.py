@@ -48,9 +48,26 @@ def _load_dotenv(path: Path) -> None:
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
+
         key, _, value = line.partition("=")
         key = key.strip()
-        value = value.strip().strip('"').strip("'")
+        # `export FOO=bar` is a common .env convention; without this the key
+        # would become "export FOO" and the real variable silently never set.
+        if key.startswith("export "):
+            key = key[len("export ") :].strip()
+        if not key:
+            continue
+
+        value = value.strip()
+        if value[:1] in {'"', "'"} and value[:1] == value[-1:] and len(value) >= 2:
+            value = value[1:-1]
+        else:
+            # Strip an unquoted trailing comment: `SRP_PORT=8000  # the port`.
+            # Quoted values keep their '#' since it may be part of a password.
+            hash_at = value.find("#")
+            if hash_at != -1:
+                value = value[:hash_at].rstrip()
+
         os.environ.setdefault(key, value)
 
 
