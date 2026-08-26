@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import AsyncIterator, Sequence
 from urllib.parse import urlparse
 
-from .models import PeakDemandObservation, Series
+from .models import DemandObservation, Series
 
 logger = logging.getLogger(__name__)
 
@@ -92,9 +92,9 @@ EXPORT_SELECTORS = (
 # How long a login is trusted before being re-established.
 SESSION_TTL = timedelta(hours=2)
 
-# Extracts the peak-demand number from the usage page. Runs in the browser
-# because the value is rendered client-side.
-_PEAK_DEMAND_JS = """
+# Extracts the demand figure and its caption from the usage page. Runs in the
+# browser because the value is rendered client-side.
+_DEMAND_JS = """
 () => {
     const clean = (text) => {
         if (!text) return null;
@@ -114,11 +114,26 @@ _PEAK_DEMAND_JS = """
         '[class*="demand"]',
     ];
 
+    // Walk up from the value to the card that captions it. The caption is
+    // what tells us whether this is an average or a peak, which differs by
+    // price plan, so it is data rather than decoration.
+    const captionFor = (el) => {
+        let node = el;
+        for (let i = 0; i < 6 && node; i++) {
+            node = node.parentElement;
+            if (!node) break;
+            const text = (node.textContent || '').replace(/\\s+/g, ' ').trim();
+            const m = text.match(/(Current[^0-9]{0,60}?Demand)/i);
+            if (m) return m[1].trim();
+        }
+        return null;
+    };
+
     for (const selector of selectors) {
         const el = document.querySelector(selector);
         const value = el && clean(el.textContent);
         if (value !== null && !Number.isNaN(value)) {
-            return { demand: value, source: selector };
+            return { demand: value, source: selector, label: captionFor(el) };
         }
     }
 
@@ -129,11 +144,11 @@ _PEAK_DEMAND_JS = """
         if (!/kW/i.test(text) || /peak/i.test(text)) continue;
         const value = clean(text);
         if (value !== null && !Number.isNaN(value)) {
-            return { demand: value, source: 'kW text scan' };
+            return { demand: value, source: 'kW text scan', label: captionFor(el) };
         }
     }
 
-    return { demand: null, source: null };
+    return { demand: null, source: null, label: null };
 }
 """
 
@@ -165,7 +180,7 @@ class SRPClient:
     Use it as an async context manager so the browser is always torn down::
 
         async with SRPClient(username, password) as srp:
-            peak = await srp.fetch_peak_demand()
+            demand = await srp.fetch_current_demand()
             files = await srp.download_all(Path("./downloads"))
     """
 
@@ -351,34 +366,50 @@ class SRPClient:
 
     # -------------------------------------------------------------- scraping
 
-    async def fetch_peak_demand(self) -> PeakDemandObservation:
-        """Read the current billing cycle's peak demand, in kW.
+    async def fetch_current_demand(self) -> DemandObservation:
+        """Read the current bill cycle's headline demand figure, in kW.
 
-        Falls back to the legacy dashboard page if the usage page yields
-        nothing, since the two render the figure from different markup.
+        Whether that figure is an *average* or a *peak* depends on the account's
+        price plan, so the on-page caption is captured with it rather than
+        assumed. Falls back to the legacy dashboard page if the usage page
+        yields nothing, since the two render the figure from different markup.
         """
         await self._ensure_usage_page()
 
-        result = await self.page.evaluate(_PEAK_DEMAND_JS)
+        result = await self.page.evaluate(_DEMAND_JS)
         if result.get("demand") is None:
-            logger.warning("peak demand not found on usage page, trying dashboard")
+            logger.warning("demand figure not found on usage page, trying dashboard")
             await self.page.goto(DASHBOARD_URL, wait_until="networkidle")
             await asyncio.sleep(3)
-            result = await self.page.evaluate(_PEAK_DEMAND_JS)
+            result = await self.page.evaluate(_DEMAND_JS)
 
         if result.get("demand") is None:
             raise ScrapeError(
-                "could not find a peak demand value on the SRP usage or dashboard "
+                "could not find a demand value on the SRP usage or dashboard "
                 "page. SRP most likely changed their markup; update the selector "
                 "cascade in srp_energy/client.py"
             )
 
-        logger.info("peak demand %.2f kW (via %s)", result["demand"], result.get("source"))
-        return PeakDemandObservation(
+        observation = DemandObservation(
             observed_at=datetime.now(),
             demand_kw=float(result["demand"]),
+            label=result.get("label"),
             source=result.get("source"),
         )
+        logger.info(
+            "%s: %.2f kW (via %s)",
+            observation.label or "current demand",
+            observation.demand_kw,
+            result.get("source"),
+        )
+        if observation.label is None:
+            # Without the caption we cannot tell an average from a peak, and
+            # reporting the wrong one misstates the demand charge.
+            logger.warning(
+                "could not read the caption next to the demand figure; treat "
+                "this value as unlabelled rather than assuming it is a peak"
+            )
+        return observation
 
     async def fetch_billing_cycle(self) -> str | None:
         """Return the billing-cycle description shown beside the demand figure."""

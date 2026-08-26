@@ -75,10 +75,10 @@ In rough order of likelihood:
 4. **A consent banner or interstitial is covering the form.** SRP has added
    these before. Dismiss it in `login()` before filling fields.
 
-## `could not find a peak demand value`
+## `could not find a demand value`
 
 ```
-ScrapeError: could not find a peak demand value on the SRP usage or dashboard page.
+ScrapeError: could not find a demand value on the SRP usage or dashboard page.
 ```
 
 The scraper already tries eight selectors and then falls back to scanning for
@@ -86,7 +86,7 @@ any leaf element containing a `kW` reading. If all of that fails, SRP changed
 the usage page materially.
 
 Fix: run headed, find the element holding the number, and prepend its selector
-to the `selectors` array in `_PEAK_DEMAND_JS` in `srp_energy/client.py`.
+to the `selectors` array in `_DEMAND_JS` in `srp_energy/client.py`.
 
 Note this error does **not** stop the CSV downloads — a fetch will still store
 daily readings and report the failure in `errors`.
@@ -153,6 +153,14 @@ head -5 data/downloads/srp_demand_*.csv | tail -4
 If the header does not match what `parser.py` expects, SRP changed the export
 format. The parser normalises case and whitespace and accepts several aliases
 per column, so add the new spelling to the relevant `_*_KEYS` tuple.
+
+### The demand figure has `label: null`
+
+The value was found but SRP's caption beside it was not. Because that caption is
+the only thing distinguishing a cycle *average* from a cycle *peak*, the value is
+stored unlabelled and a warning is logged rather than guessing. Fix by updating
+the `captionFor` regex in `_DEMAND_JS` in `srp_energy/client.py` — it currently
+looks for text matching `Current ... Demand` within six ancestors of the value.
 
 ### Demand rows have `off_peak: null`
 

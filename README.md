@@ -1,6 +1,6 @@
 # SRP Energy Monitor
 
-Collect your **Salt River Project** electricity data — peak demand, usage, generation and net energy — and serve it over a REST API, a Prometheus endpoint, a CSV/JSON export, or a small built-in dashboard.
+Collect your **Salt River Project** electricity data — bill-cycle demand, usage, generation and net energy — and serve it over a REST API, a Prometheus endpoint, a CSV/JSON export, or a small built-in dashboard.
 
 SRP publishes residential usage only through their web portal. There is no API. This project signs in on your behalf, pulls the numbers, stores them in SQLite, and makes them available to whatever you want to build next.
 
@@ -10,14 +10,26 @@ SRP publishes residential usage only through their web portal. There is no API. 
 
 ## Why
 
-If you are on SRP's demand-based rate plans (E-27, E-28, EZ-3), your bill is driven by a single number: the **highest 30-minute on-peak demand** in the billing cycle. One careless hour in July can set the charge for the entire month. SRP shows you that number on a web page and nowhere else.
+If you are on one of SRP's demand-based price plans, your bill is driven by a single number that SRP shows on a web page and nowhere else. **Which** number depends on your plan:
 
-This turns it into data:
+- On a **peak**-demand plan (E-27, E-28) it is the highest on-peak demand in the cycle — one careless hour in July sets the charge for the whole month.
+- On an **average**-demand plan ("Customer Generation Avg Demand Plan") it is the mean on-peak demand across the cycle so far.
+
+Those are very different quantities, so this tool captures SRP's own caption alongside the value rather than assuming either:
 
 ```console
-$ curl -s localhost:8000/api/v1/peak-demand
-{"observed_at": "2026-08-26T06:00:04", "demand_kw": 8.4, "unit": "kW", "source": ".srp-red-text strong"}
+$ curl -s localhost:8000/api/v1/demand
+{
+  "observed_at": "2026-08-26T16:19:53",
+  "demand_kw": 5.4,
+  "unit": "kW",
+  "label": "Current Average On-Peak Demand",
+  "is_average": true,
+  "source": ".srp-red-text strong"
+}
 ```
+
+Check `label` / `is_average` before you alert on it. Treating a cycle average as a peak (or the reverse) silently misreports the number that drives your bill.
 
 Which means you can alert on it, chart it against temperature, feed it to Home Assistant, or scrape it into Grafana — none of which the portal lets you do.
 
@@ -25,14 +37,14 @@ Which means you can alert on it, chart it against temperature, feed it to Home A
 
 | Series | What SRP reports | Unit |
 |---|---|---|
-| `demand` | Daily peak on-peak demand | kW |
+| `demand` | Daily on-peak demand, as published in SRP's Demand export | kW |
 | `usage` | Energy consumed, split off-peak / on-peak | kWh |
 | `generation` | Energy your solar produced, split off-peak / on-peak | kWh |
 | `net` | Net energy — negative when you export more than you draw | kWh |
 
 Every series also carries the day's high and low temperature, which SRP includes in its exports and which is most of what you need to explain a usage spike.
 
-Plus a live scrape of the **current billing cycle's peak demand**, recorded as a time series so you can watch it climb through the month.
+Plus a live scrape of the **current bill cycle's headline demand figure** — with the caption SRP published it under — recorded as a time series so you can watch it move through the month.
 
 ---
 
@@ -65,7 +77,7 @@ $EDITOR .env                     # set SRP_USERNAME and SRP_PASSWORD
 ## Use
 
 ```bash
-srp-energy-monitor fetch      # log in, pull all four series + peak demand, store
+srp-energy-monitor fetch      # log in, pull all four series + the demand figure, store
 srp-energy-monitor show       # print what's in the database
 srp-energy-monitor serve      # REST API + dashboard on http://127.0.0.1:8000
 srp-energy-monitor export --format json --series demand
@@ -76,12 +88,12 @@ A first fetch looks like this:
 
 ```console
 $ srp-energy-monitor fetch
-2026-08-26 06:00:02 INFO    srp_energy.client: logging in to SRP as jeremy@example.com
-2026-08-26 06:00:09 INFO    srp_energy.client: SRP login successful
-2026-08-26 06:00:14 INFO    srp_energy.client: peak demand 8.40 kW (via .srp-red-text strong)
-2026-08-26 06:00:41 INFO    srp_energy.service: fetch complete: 124 readings across ['net', 'generation', 'usage', 'demand']
-Peak demand: 8.40 kW
-Stored 124 readings across 4 series: net, generation, usage, demand
+2026-08-26 16:19:37 INFO    srp_energy.client: logging in to SRP as example
+2026-08-26 16:19:46 INFO    srp_energy.client: SRP login successful
+2026-08-26 16:19:53 INFO    srp_energy.client: Current Average On-Peak Demand: 5.40 kW (via .srp-red-text strong)
+2026-08-26 16:20:11 INFO    srp_energy.service: fetch complete: 124 readings across ['usage', 'generation', 'net', 'demand']
+Current Average On-Peak Demand: 5.40 kW
+Stored 124 readings across 4 series: usage, generation, net, demand
 ```
 
 ### Keep it current
@@ -102,8 +114,8 @@ Re-running a fetch is safe: readings upsert on `(series, date)`, so re-imports c
 
 | Endpoint | Returns |
 |---|---|
-| `GET /api/v1/peak-demand` | Latest billing-cycle peak demand |
-| `GET /api/v1/peak-demand/history?days=30` | Peak demand over time |
+| `GET /api/v1/demand` | Latest bill-cycle demand figure, with SRP's caption |
+| `GET /api/v1/demand/history?days=30` | Demand observations over time |
 | `GET /api/v1/readings?series=&start=&end=` | Daily readings, filterable |
 | `GET /api/v1/series/{series}?days=30` | One series, shaped for charting |
 | `GET /api/v1/summary` | Row counts and date coverage |
@@ -119,8 +131,8 @@ $ curl -s 'localhost:8000/api/v1/readings?series=demand&start=2026-08-01' | jq '
   "usage_date": "2026-08-25",
   "meter_read_date": "2026-08-26",
   "off_peak": null,
-  "on_peak": 8.4,
-  "high_temp_f": 112.0,
+  "on_peak": 0.7,
+  "high_temp_f": 114.0,
   "low_temp_f": 88.0,
   "unit": "kW",
   "total": null
@@ -141,7 +153,9 @@ scrape_configs:
       - targets: ['localhost:8000']
 ```
 
-Exposed metrics: `srp_peak_demand_kw`, `srp_peak_demand_observed_timestamp_seconds`, `srp_daily_peak_demand_kw`, `srp_daily_energy_kwh{series,period,date}`, `srp_readings_total{series}`.
+Exposed metrics: `srp_current_demand_kw{label,is_average}`, `srp_current_demand_observed_timestamp_seconds`, `srp_daily_on_peak_demand_kw{date}`, `srp_daily_energy_kwh{series,period,date}`, `srp_readings_total{series}`.
+
+The `label` and `is_average` labels on `srp_current_demand_kw` carry SRP's own caption, so an alert rule can assert which quantity it is reading rather than assuming.
 
 ### As a library
 
@@ -171,7 +185,7 @@ The design point is that **only `client.py` touches a browser**. Parsing, storag
 
 | File | Role |
 |---|---|
-| `srp_energy/client.py` | Playwright login, peak-demand scrape, CSV export |
+| `srp_energy/client.py` | Playwright login, demand-figure scrape, CSV export |
 | `srp_energy/parser.py` | SRP CSV → `DailyReading` objects (pure, no I/O) |
 | `srp_energy/storage.py` | SQLite schema and queries |
 | `srp_energy/service.py` | Wires fetch → parse → store |
@@ -184,6 +198,7 @@ The design point is that **only `client.py` touches a browser**. Parsing, storag
 ## Known limitations
 
 - **Cloudflare fronts the portal.** A default Playwright browser is refused outright with an "Access Denied / Ray ID" page before SRP serves any markup. The client therefore presents a realistic desktop fingerprint (real user agent, 1440×900 viewport, `America/Phoenix` timezone, no `navigator.webdriver` flag). This is presentation, not evasion of an access control — the scraper still signs in with your own credentials to read your own data. If Cloudflare tightens further, this is the first thing that will break.
+- **The headline demand figure means different things on different plans.** It is an average on some price plans and a maximum on others, so it is stored and served with SRP's own caption (`label`, `is_average`) rather than a hard-coded meaning. If SRP restyles that card so the caption cannot be read, the value is still recorded but `label` is `null` and a warning is logged — do not assume a peak in that case.
 - **No date-range selection.** SRP's export gives you whatever window the portal is showing, typically the last ~31 days. There is no way to request an arbitrary historical range, so deep history has to be accumulated by fetching regularly. If you have old exports, `srp-energy-monitor import` will backfill them.
 - **No MFA support.** See above.
 - **Single account.** If your login has multiple SRP accounts or meters, the scraper takes whichever the portal defaults to.

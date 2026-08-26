@@ -9,7 +9,7 @@ from datetime import date, datetime, timedelta
 
 import pytest
 
-from srp_energy.models import DailyReading, PeakDemandObservation, Series
+from srp_energy.models import DailyReading, DemandObservation, Series
 from srp_energy.storage import Store
 
 
@@ -79,32 +79,32 @@ def test_upserting_nothing_is_a_no_op(store):
 def test_peak_demand_latest_and_history(store):
     now = datetime(2025, 7, 1, 12, 0, 0)
     for i, kw in enumerate([3.1, 4.2, 5.3]):
-        store.record_peak_demand(
-            PeakDemandObservation(observed_at=now + timedelta(hours=i), demand_kw=kw)
+        store.record_demand(
+            DemandObservation(observed_at=now + timedelta(hours=i), demand_kw=kw)
         )
 
-    latest = store.latest_peak_demand()
+    latest = store.latest_demand()
     assert latest is not None and latest.demand_kw == 5.3
-    assert [o.demand_kw for o in store.peak_demand_history(limit=2)] == [5.3, 4.2]
+    assert [o.demand_kw for o in store.demand_history(limit=2)] == [5.3, 4.2]
 
 
 def test_latest_peak_demand_is_none_on_empty_database(store):
-    assert store.latest_peak_demand() is None
-    assert store.peak_demand_history() == []
+    assert store.latest_demand() is None
+    assert store.demand_history() == []
 
 
 def test_summary_reports_coverage(store):
     store.upsert_readings([reading(1), reading(5)])
-    store.record_peak_demand(
-        PeakDemandObservation(observed_at=datetime(2025, 7, 1), demand_kw=2.0)
+    store.record_demand(
+        DemandObservation(observed_at=datetime(2025, 7, 1), demand_kw=2.0)
     )
 
     summary = store.summary()
     assert summary["series"]["usage"]["days"] == 2
     assert summary["series"]["usage"]["first_date"] == "2025-07-01"
     assert summary["series"]["usage"]["last_date"] == "2025-07-05"
-    assert summary["peak_demand_observations"] == 1
-    assert summary["latest_peak_demand"]["demand_kw"] == 2.0
+    assert summary["demand_observations"] == 1
+    assert summary["latest_demand"]["demand_kw"] == 2.0
 
 
 def test_reopening_an_existing_database_preserves_data(tmp_path):
@@ -112,3 +112,37 @@ def test_reopening_an_existing_database_preserves_data(tmp_path):
     Store(path).upsert_readings([reading(1)])
 
     assert len(Store(path).readings()) == 1, "re-init must not wipe the schema"
+
+
+def test_v1_database_migrates_without_inventing_a_label(tmp_path):
+    """A v1 row's meaning is unknown, so it must not be relabelled by guess."""
+    import sqlite3
+
+    path = tmp_path / "v1.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE peak_demand_observation (
+            observed_at TEXT PRIMARY KEY,
+            demand_kw   REAL NOT NULL,
+            source      TEXT
+        );
+        INSERT INTO peak_demand_observation VALUES
+            ('2026-08-26T16:12:47', 5.4, '.srp-red-text strong');
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    store = Store(path)
+
+    latest = store.latest_demand()
+    assert latest is not None
+    assert latest.demand_kw == 5.4
+    assert latest.source == ".srp-red-text strong"
+    assert latest.label is None, "an unknown v1 value must not be asserted as a peak"
+    assert latest.is_average is False
+
+    with store.connect() as conn:
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "peak_demand_observation" not in tables, "old table should be dropped"

@@ -49,9 +49,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Limit to one series; repeatable. Default: all four.",
     )
     fetch.add_argument(
-        "--no-peak-demand",
+        "--no-demand",
         action="store_true",
-        help="Skip the live peak-demand scrape and only export CSVs.",
+        help="Skip the live demand-figure scrape and only export CSVs.",
     )
     fetch.add_argument(
         "--show-browser",
@@ -98,12 +98,13 @@ def _cmd_fetch(args: argparse.Namespace, settings: Settings, store: Store) -> in
 
     result = asyncio.run(
         fetch_and_store(
-            settings, store, series, include_peak_demand=not args.no_peak_demand
+            settings, store, series, include_demand=not args.no_demand
         )
     )
 
-    if result.peak_demand:
-        print(f"Peak demand: {result.peak_demand.demand_kw:.2f} kW")
+    if result.demand:
+        d = result.demand
+        print(f"{d.label or 'Current demand'}: {d.demand_kw:.2f} kW")
     if result.billing_cycle:
         print(result.billing_cycle)
     print(
@@ -145,9 +146,10 @@ def _cmd_serve(args: argparse.Namespace, settings: Settings, store: Store) -> in
 
 def _cmd_show(args: argparse.Namespace, settings: Settings, store: Store) -> int:
     summary = store.summary()
-    latest = summary["latest_peak_demand"]
+    latest = summary["latest_demand"]
     if latest:
-        print(f"Latest peak demand: {latest['demand_kw']:.2f} kW  ({latest['observed_at']})")
+        caption = latest.get("label") or "Current demand (unlabelled)"
+        print(f"{caption}: {latest['demand_kw']:.2f} kW  ({latest['observed_at']})")
     if not summary["series"]:
         print("No data stored yet. Run `srp-energy-monitor fetch` first.")
         return 1

@@ -49,10 +49,11 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
     app = FastAPI(
         title="SRP Energy Monitor",
         version="1.0.0",
-        summary="Read your Salt River Project peak demand and energy data over HTTP.",
+        summary="Read your Salt River Project demand and energy data over HTTP.",
         description=(
             "Salt River Project publishes residential usage only through their web "
-            "portal. This service signs in on your behalf, collects peak demand, "
+            "portal. This service signs in on your behalf, collects the bill-cycle "
+            "demand figure, "
             "usage, generation and net energy, stores them, and serves them as JSON "
             "so other tools can use them.\n\n"
             "Not affiliated with or endorsed by Salt River Project."
@@ -93,30 +94,36 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
     # ----------------------------------------------------------------- data
 
     @app.get(
-        f"{API_PREFIX}/peak-demand",
-        tags=["peak demand"],
-        summary="Latest billing-cycle peak demand",
+        f"{API_PREFIX}/demand",
+        tags=["demand"],
+        summary="Latest bill-cycle demand figure",
+        description=(
+            "The headline demand number SRP shows for the current bill cycle, "
+            "with the caption it was published under. On an average-demand "
+            "plan this is a cycle mean (`is_average` true); on a peak-demand "
+            "plan it is a maximum. Check `label` before treating it as either."
+        ),
     )
-    async def peak_demand() -> dict[str, Any]:
-        latest = store.latest_peak_demand()
+    async def demand() -> dict[str, Any]:
+        latest = store.latest_demand()
         if latest is None:
             raise HTTPException(
                 status_code=404,
-                detail="no peak demand recorded yet; run a fetch first",
+                detail="no demand figure recorded yet; run a fetch first",
             )
         return latest.to_dict()
 
     @app.get(
-        f"{API_PREFIX}/peak-demand/history",
-        tags=["peak demand"],
-        summary="Peak demand observations over time",
+        f"{API_PREFIX}/demand/history",
+        tags=["demand"],
+        summary="Demand observations over time",
     )
-    async def peak_demand_history(
+    async def demand_history(
         days: int = Query(30, ge=1, le=3650, description="How far back to look."),
         limit: int = Query(500, ge=1, le=10_000),
     ) -> dict[str, Any]:
         since = datetime.now() - timedelta(days=days)
-        history = store.peak_demand_history(start=since, limit=limit)
+        history = store.demand_history(start=since, limit=limit)
         return {
             "count": len(history),
             "unit": "kW",
@@ -227,17 +234,22 @@ def _render_metrics(store: Store) -> str:
         lines.append(f"# TYPE {name} {kind}")
         lines.extend(f"{name}{labels} {value}" for labels, value in samples)
 
-    latest = store.latest_peak_demand()
+    latest = store.latest_demand()
     if latest is not None:
+        # The caption rides along as a label because the same metric is a cycle
+        # mean on one price plan and a maximum on another; alerting on it
+        # without knowing which would be meaningless.
+        caption = (latest.label or "unlabelled").replace("\\", "").replace('"', "")
         add(
-            "srp_peak_demand_kw",
-            "Peak on-peak demand recorded in the current SRP billing cycle.",
+            "srp_current_demand_kw",
+            "Headline demand figure SRP reports for the current bill cycle. "
+            "See the label for whether it is an average or a peak.",
             "gauge",
-            [("", latest.demand_kw)],
+            [(f'{{label="{caption}",is_average="{str(latest.is_average).lower()}"}}', latest.demand_kw)],
         )
         add(
-            "srp_peak_demand_observed_timestamp_seconds",
-            "Unix timestamp of the most recent peak demand observation.",
+            "srp_current_demand_observed_timestamp_seconds",
+            "Unix timestamp of the most recent demand observation.",
             "gauge",
             [("", latest.observed_at.timestamp())],
         )
@@ -252,8 +264,9 @@ def _render_metrics(store: Store) -> str:
         if series is Series.DEMAND:
             if newest.on_peak is not None:
                 add(
-                    "srp_daily_peak_demand_kw",
-                    "Peak demand for the most recent day SRP has reported.",
+                    "srp_daily_on_peak_demand_kw",
+                    "On-peak demand for the most recent day SRP has reported, "
+                    "as published in the Demand export.",
                     "gauge",
                     [(f'{{date="{newest.usage_date.isoformat()}"}}', newest.on_peak)],
                 )

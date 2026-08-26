@@ -91,23 +91,39 @@ class DailyReading:
 
 
 @dataclass(frozen=True, slots=True)
-class PeakDemandObservation:
-    """The billing-cycle peak demand figure shown on the usage page.
+class DemandObservation:
+    """The headline demand figure SRP shows for the current bill cycle.
 
-    This is a live scrape of a single number, not a CSV row: SRP shows the
-    highest on-peak demand recorded so far in the current billing cycle. It is
-    the value most worth alerting on, because it sets the demand charge for the
-    whole month.
+    A live scrape of one number, not a CSV row. Its *meaning depends on the
+    account's price plan*, so the on-page caption is captured alongside the
+    value rather than assumed:
+
+    * On an average-demand plan (e.g. "Customer Generation Avg Demand Plan")
+      the card reads "Current Average On-Peak Demand" and the number is the
+      mean on-peak demand across the cycle so far.
+    * On a peak-demand plan (E-27 / E-28) it is the highest on-peak demand
+      recorded in the cycle.
+
+    Treating one as the other silently misreports the number that drives the
+    demand charge, so ``label`` is part of the data, not decoration.
     """
 
     observed_at: datetime
     demand_kw: float
+    label: str | None = None
     source: str | None = None
+
+    @property
+    def is_average(self) -> bool:
+        """True when SRP captions this figure as an average rather than a peak."""
+        return bool(self.label and "average" in self.label.lower())
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "observed_at": self.observed_at.isoformat(),
             "demand_kw": self.demand_kw,
             "unit": "kW",
+            "label": self.label,
+            "is_average": self.is_average,
             "source": self.source,
         }

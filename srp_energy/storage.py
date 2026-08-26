@@ -7,10 +7,11 @@ Two tables, both designed so repeated fetches are idempotent:
     settles, so imports upsert rather than insert -- re-running a fetch
     corrects history instead of duplicating it.
 
-``peak_demand_observation``
-    An append-only log of the live billing-cycle peak demand figure. This one
-    *is* a time series: the value climbs through the month, and watching it
-    climb is the point.
+``demand_observation``
+    An append-only log of the live bill-cycle demand figure, with the caption
+    SRP printed beside it. The caption matters: on an average-demand plan the
+    number is a cycle mean, on a peak-demand plan it is a maximum, and storing
+    it without that context makes the two indistinguishable after the fact.
 
 SQLite is sufficient here by a wide margin -- this is at most a few thousand
 rows a year -- and it keeps the project a single-file deploy with no external
@@ -25,9 +26,9 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Iterable, Iterator, Sequence
 
-from .models import DailyReading, PeakDemandObservation, Series
+from .models import DailyReading, DemandObservation, Series
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS daily_reading (
@@ -42,9 +43,10 @@ CREATE TABLE IF NOT EXISTS daily_reading (
     PRIMARY KEY (series, usage_date)
 );
 
-CREATE TABLE IF NOT EXISTS peak_demand_observation (
+CREATE TABLE IF NOT EXISTS demand_observation (
     observed_at TEXT PRIMARY KEY,
     demand_kw   REAL NOT NULL,
+    label       TEXT,
     source      TEXT
 );
 
@@ -54,7 +56,7 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 
 CREATE INDEX IF NOT EXISTS idx_daily_date ON daily_reading(usage_date);
-CREATE INDEX IF NOT EXISTS idx_demand_time ON peak_demand_observation(observed_at);
+CREATE INDEX IF NOT EXISTS idx_demand_time ON demand_observation(observed_at);
 """
 
 
@@ -86,11 +88,31 @@ class Store:
     def _init_schema(self) -> None:
         with self.connect() as conn:
             conn.executescript(_SCHEMA)
+            self._migrate(conn)
             conn.execute(
                 "INSERT INTO meta(key, value) VALUES('schema_version', ?) "
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (str(SCHEMA_VERSION),),
             )
+
+    @staticmethod
+    def _migrate(conn: sqlite3.Connection) -> None:
+        """Carry a v1 database forward.
+
+        v1 stored the live figure in ``peak_demand_observation`` and assumed it
+        was a peak. It may well have been a cycle *average* -- that depends on
+        the price plan -- so rows are copied across with a NULL label rather
+        than being relabelled with a guess.
+        """
+        existing = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )}
+        if "peak_demand_observation" in existing:
+            conn.execute(
+                "INSERT OR IGNORE INTO demand_observation (observed_at, demand_kw, label, source)"
+                " SELECT observed_at, demand_kw, NULL, source FROM peak_demand_observation"
+            )
+            conn.execute("DROP TABLE peak_demand_observation")
 
     # -------------------------------------------------------------- writing
 
@@ -130,14 +152,15 @@ class Store:
             )
         return len(rows)
 
-    def record_peak_demand(self, observation: PeakDemandObservation) -> None:
+    def record_demand(self, observation: DemandObservation) -> None:
         with self.connect() as conn:
             conn.execute(
-                "INSERT OR REPLACE INTO peak_demand_observation"
-                " (observed_at, demand_kw, source) VALUES (?, ?, ?)",
+                "INSERT OR REPLACE INTO demand_observation"
+                " (observed_at, demand_kw, label, source) VALUES (?, ?, ?, ?)",
                 (
                     observation.observed_at.isoformat(timespec="seconds"),
                     observation.demand_kw,
+                    observation.label,
                     observation.source,
                 ),
             )
@@ -190,19 +213,19 @@ class Store:
             rows = conn.execute(sql, params).fetchall()
         return [_row_to_reading(row) for row in rows]
 
-    def latest_peak_demand(self) -> PeakDemandObservation | None:
+    def latest_demand(self) -> DemandObservation | None:
         with self.connect() as conn:
             row = conn.execute(
-                "SELECT * FROM peak_demand_observation ORDER BY observed_at DESC LIMIT 1"
+                "SELECT * FROM demand_observation ORDER BY observed_at DESC LIMIT 1"
             ).fetchone()
         return _row_to_observation(row) if row else None
 
-    def peak_demand_history(
+    def demand_history(
         self,
         start: datetime | None = None,
         limit: int = 500,
-    ) -> list[PeakDemandObservation]:
-        sql = "SELECT * FROM peak_demand_observation"
+    ) -> list[DemandObservation]:
+        sql = "SELECT * FROM demand_observation"
         params: list[object] = []
         if start is not None:
             sql += " WHERE observed_at >= ?"
@@ -229,10 +252,10 @@ class Store:
                 """
             ).fetchall()
             demand_count = conn.execute(
-                "SELECT COUNT(*) FROM peak_demand_observation"
+                "SELECT COUNT(*) FROM demand_observation"
             ).fetchone()[0]
 
-        latest = self.latest_peak_demand()
+        latest = self.latest_demand()
         return {
             "database": str(self.path),
             "schema_version": SCHEMA_VERSION,
@@ -245,8 +268,8 @@ class Store:
                 }
                 for row in per_series
             },
-            "peak_demand_observations": demand_count,
-            "latest_peak_demand": latest.to_dict() if latest else None,
+            "demand_observations": demand_count,
+            "latest_demand": latest.to_dict() if latest else None,
         }
 
 
@@ -264,9 +287,10 @@ def _row_to_reading(row: sqlite3.Row) -> DailyReading:
     )
 
 
-def _row_to_observation(row: sqlite3.Row) -> PeakDemandObservation:
-    return PeakDemandObservation(
+def _row_to_observation(row: sqlite3.Row) -> DemandObservation:
+    return DemandObservation(
         observed_at=datetime.fromisoformat(row["observed_at"]),
         demand_kw=row["demand_kw"],
+        label=row["label"],
         source=row["source"],
     )

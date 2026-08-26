@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from srp_energy.api import create_app  # noqa: E402
 from srp_energy.config import Settings  # noqa: E402
-from srp_energy.models import DailyReading, PeakDemandObservation, Series  # noqa: E402
+from srp_energy.models import DailyReading, DemandObservation, Series  # noqa: E402
 from srp_energy.storage import Store  # noqa: E402
 
 
@@ -34,8 +34,8 @@ def client(tmp_path):
             DailyReading(series=Series.DEMAND, usage_date=date(2025, 7, 3), on_peak=2.4),
         ]
     )
-    store.record_peak_demand(
-        PeakDemandObservation(observed_at=datetime(2025, 7, 3, 6, 0), demand_kw=4.5, source=".srp-red-text strong")
+    store.record_demand(
+        DemandObservation(observed_at=datetime(2025, 7, 3, 6, 0), demand_kw=4.5, source=".srp-red-text strong")
     )
     settings = Settings(database_path=tmp_path / "api.db", data_dir=tmp_path)
     return TestClient(create_app(settings, store))
@@ -50,7 +50,7 @@ def test_health_reports_coverage(client):
 
 
 def test_peak_demand_endpoint(client):
-    body = client.get("/api/v1/peak-demand").json()
+    body = client.get("/api/v1/demand").json()
 
     assert body["demand_kw"] == 4.5
     assert body["unit"] == "kW"
@@ -81,10 +81,47 @@ def test_series_endpoint_is_chart_shaped(client):
 def test_metrics_exposes_prometheus_format(client):
     text = client.get("/metrics").text
 
-    assert "# TYPE srp_peak_demand_kw gauge" in text
-    assert "srp_peak_demand_kw 4.5" in text
+    assert "# TYPE srp_current_demand_kw gauge" in text
+    assert "srp_current_demand_kw{" in text
     assert 'srp_daily_energy_kwh{series="usage",period="on_peak"' in text
     assert 'srp_readings_total{series="usage"} 3.0' in text
+
+
+def test_metrics_carry_the_srp_caption_so_average_is_not_read_as_peak(tmp_path):
+    """The same metric is a cycle mean on one plan and a maximum on another."""
+    store = Store(tmp_path / "labelled.db")
+    store.record_demand(
+        DemandObservation(
+            observed_at=datetime(2026, 8, 26, 16, 0),
+            demand_kw=5.4,
+            label="Current Average On-Peak Demand",
+        )
+    )
+    c = TestClient(create_app(Settings(database_path=tmp_path / "labelled.db"), store))
+
+    text = c.get("/metrics").text
+    assert 'label="Current Average On-Peak Demand"' in text
+    assert 'is_average="true"' in text
+    assert "srp_current_demand_kw" in text and "5.4" in text
+
+    body = c.get("/api/v1/demand").json()
+    assert body["label"] == "Current Average On-Peak Demand"
+    assert body["is_average"] is True
+
+
+def test_a_peak_plan_caption_is_not_flagged_as_average(tmp_path):
+    store = Store(tmp_path / "peak.db")
+    store.record_demand(
+        DemandObservation(
+            observed_at=datetime(2026, 8, 26, 16, 0),
+            demand_kw=12.7,
+            label="Current Peak Demand",
+        )
+    )
+    c = TestClient(create_app(Settings(database_path=tmp_path / "peak.db"), store))
+
+    assert c.get("/api/v1/demand").json()["is_average"] is False
+    assert 'is_average="false"' in c.get("/metrics").text
 
 
 def test_fetch_without_credentials_is_refused(client):
@@ -105,5 +142,5 @@ def test_peak_demand_404_on_empty_database(tmp_path):
     store = Store(tmp_path / "empty.db")
     empty = TestClient(create_app(Settings(database_path=tmp_path / "empty.db"), store))
 
-    assert empty.get("/api/v1/peak-demand").status_code == 404
+    assert empty.get("/api/v1/demand").status_code == 404
     assert empty.get("/metrics").text.startswith("# no SRP data")

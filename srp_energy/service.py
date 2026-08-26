@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Sequence
 
 from .config import Settings
-from .models import PeakDemandObservation, Series
+from .models import DemandObservation, Series
 from .parser import ParseError, iter_downloads, parse_file
 from .storage import Store
 
@@ -31,20 +31,20 @@ class FetchResult:
 
     readings_written: int = 0
     series_fetched: list[str] = field(default_factory=list)
-    peak_demand: PeakDemandObservation | None = None
+    demand: DemandObservation | None = None
     billing_cycle: str | None = None
     errors: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
-        return bool(self.series_fetched or self.peak_demand)
+        return bool(self.series_fetched or self.demand)
 
     def to_dict(self) -> dict[str, object]:
         return {
             "ok": self.ok,
             "readings_written": self.readings_written,
             "series_fetched": self.series_fetched,
-            "peak_demand": self.peak_demand.to_dict() if self.peak_demand else None,
+            "demand": self.demand.to_dict() if self.demand else None,
             "billing_cycle": self.billing_cycle,
             "errors": self.errors,
         }
@@ -55,7 +55,7 @@ async def fetch_and_store(
     store: Store,
     series: Sequence[Series] | None = None,
     *,
-    include_peak_demand: bool = True,
+    include_demand: bool = True,
 ) -> FetchResult:
     """Log in to SRP, pull the requested series, and persist everything.
 
@@ -88,14 +88,14 @@ async def fetch_and_store(
             result.errors.append(f"login: {exc}")
             return result
 
-        if include_peak_demand:
+        if include_demand:
             try:
-                observation = await client.fetch_peak_demand()
-                store.record_peak_demand(observation)
-                result.peak_demand = observation
+                observation = await client.fetch_current_demand()
+                store.record_demand(observation)
+                result.demand = observation
             except Exception as exc:
-                logger.error("peak demand fetch failed: %s", exc)
-                result.errors.append(f"peak_demand: {exc}")
+                logger.error("demand fetch failed: %s", exc)
+                result.errors.append(f"demand: {exc}")
 
             try:
                 result.billing_cycle = await client.fetch_billing_cycle()

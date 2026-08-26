@@ -105,7 +105,7 @@
 
 <script>
 const SERIES = [
-  { key: 'demand',     label: 'Peak demand' },
+  { key: 'demand',     label: 'Demand' },
   { key: 'usage',      label: 'Usage' },
   { key: 'generation', label: 'Generation' },
   { key: 'net',        label: 'Net energy' },
@@ -140,12 +140,15 @@ function renderTabs() {
 async function loadCards() {
   const summary = await getJSON('/api/v1/summary');
   const cards = [];
-  const peak = summary.latest_peak_demand;
+  const demand = summary.latest_demand;
 
+  // The caption comes from SRP because its meaning is plan-dependent: an
+  // average on some price plans, a maximum on others.
+  const demandLabel = (demand && demand.label) || 'Current demand';
   cards.push(`<div class="card primary">
-    <div class="label">Billing cycle peak</div>
-    <div class="value">${fmt(peak && peak.demand_kw)}<span class="unit">kW</span></div>
-    <div class="meta">${peak ? new Date(peak.observed_at).toLocaleString() : 'not yet collected'}</div>
+    <div class="label">${demandLabel}</div>
+    <div class="value">${fmt(demand && demand.demand_kw)}<span class="unit">kW</span></div>
+    <div class="meta">${demand ? new Date(demand.observed_at).toLocaleString() : 'not yet collected'}</div>
   </div>`);
 
   for (const s of SERIES) {
