@@ -1,0 +1,145 @@
+"""Ties the scraper, parser and store together.
+
+This is the only module that needs all three, which keeps the dependency
+direction clean: the API and CLI call in here, and nothing here calls back out
+to them.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Sequence
+
+from .config import Settings
+from .models import PeakDemandObservation, Series
+from .parser import ParseError, iter_downloads, parse_file
+from .storage import Store
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class FetchResult:
+    """What a fetch actually accomplished, including partial failures.
+
+    A fetch that gets three of four series is a useful outcome, not an error,
+    so failures are reported alongside successes rather than raised.
+    """
+
+    readings_written: int = 0
+    series_fetched: list[str] = field(default_factory=list)
+    peak_demand: PeakDemandObservation | None = None
+    billing_cycle: str | None = None
+    errors: list[str] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return bool(self.series_fetched or self.peak_demand)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "ok": self.ok,
+            "readings_written": self.readings_written,
+            "series_fetched": self.series_fetched,
+            "peak_demand": self.peak_demand.to_dict() if self.peak_demand else None,
+            "billing_cycle": self.billing_cycle,
+            "errors": self.errors,
+        }
+
+
+async def fetch_and_store(
+    settings: Settings,
+    store: Store,
+    series: Sequence[Series] | None = None,
+    *,
+    include_peak_demand: bool = True,
+) -> FetchResult:
+    """Log in to SRP, pull the requested series, and persist everything.
+
+    Each stage is guarded independently so one failure does not discard the
+    data already collected.
+    """
+    from .client import SRPClient  # imported here so Playwright stays optional
+
+    username, password = settings.require_credentials()
+    settings.ensure_dirs()
+    result = FetchResult()
+
+    client = SRPClient(
+        username,
+        password,
+        headless=settings.headless,
+        timeout_ms=settings.timeout_ms,
+        download_timeout_ms=settings.download_timeout_ms,
+    )
+
+    try:
+        await client.start()
+        await client.login()
+
+        if include_peak_demand:
+            try:
+                observation = await client.fetch_peak_demand()
+                store.record_peak_demand(observation)
+                result.peak_demand = observation
+            except Exception as exc:
+                logger.error("peak demand fetch failed: %s", exc)
+                result.errors.append(f"peak_demand: {exc}")
+
+            try:
+                result.billing_cycle = await client.fetch_billing_cycle()
+            except Exception as exc:  # pragma: no cover - cosmetic
+                logger.debug("billing cycle fetch failed: %s", exc)
+
+        wanted = list(series) if series else list(Series)
+        for item in wanted:
+            try:
+                path = await client.download_series(item, settings.downloads_dir)
+            except Exception as exc:
+                logger.error("download failed for %s: %s", item.value, exc)
+                result.errors.append(f"{item.value}: {exc}")
+                continue
+
+            try:
+                readings = parse_file(path, item)
+            except ParseError as exc:
+                logger.error("parse failed for %s: %s", path.name, exc)
+                result.errors.append(f"{item.value}: {exc}")
+                continue
+
+            result.readings_written += store.upsert_readings(readings)
+            result.series_fetched.append(item.value)
+
+            if not settings.keep_downloads:
+                path.unlink(missing_ok=True)
+
+            await asyncio.sleep(1)  # be polite between exports
+    finally:
+        await client.close()
+
+    logger.info(
+        "fetch complete: %d readings across %s%s",
+        result.readings_written,
+        result.series_fetched or "no series",
+        f", {len(result.errors)} error(s)" if result.errors else "",
+    )
+    return result
+
+
+def import_directory(store: Store, directory: str | Path) -> tuple[int, list[str]]:
+    """Backfill the database from a folder of previously downloaded CSVs.
+
+    Returns ``(rows_written, errors)``. Existing rows are updated in place, so
+    importing the same directory twice is a no-op rather than a duplication.
+    """
+    written = 0
+    errors: list[str] = []
+    for path, series in iter_downloads(directory):
+        try:
+            written += store.upsert_readings(parse_file(path, series))
+        except (ParseError, OSError) as exc:
+            errors.append(f"{path.name}: {exc}")
+    return written, errors

@@ -1,0 +1,40 @@
+# Secrets -- never commit these
+.env
+*.pem
+*.key
+
+# Collected data: yours, not the repo's
+data/
+downloads/
+*.db
+*.db-wal
+*.db-shm
+srp_*.csv
+# ...except the synthetic test fixtures, which carry invented numbers and must
+# be committed or a fresh clone cannot run its own test suite.
+!tests/fixtures/srp_*.csv
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Logs
+*.log
+logs/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store

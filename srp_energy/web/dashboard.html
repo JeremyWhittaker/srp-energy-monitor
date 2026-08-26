@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SRP Energy Monitor</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --border: #e2e5ea;
+    --text: #17191c;
+    --muted: #6b7280;
+    --accent: #b3261e;
+    --on-peak: #d1453b;
+    --off-peak: #3b7dd8;
+    --grid: #e8ebef;
+    --shadow: 0 1px 2px rgba(16, 20, 28, .06), 0 4px 12px rgba(16, 20, 28, .05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115;
+      --panel: #171a20;
+      --border: #262b33;
+      --text: #e8eaed;
+      --muted: #9aa3af;
+      --accent: #f2665c;
+      --on-peak: #f2665c;
+      --off-peak: #6ba4f0;
+      --grid: #232830;
+      --shadow: none;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 32px 20px 64px; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; margin-bottom: 24px; }
+  h1 { font-size: 22px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); font-size: 13px; }
+  header .spacer { flex: 1; }
+  button {
+    font: inherit; font-size: 13px; padding: 7px 14px; border-radius: 7px;
+    border: 1px solid var(--border); background: var(--panel); color: var(--text);
+    cursor: pointer; transition: border-color .15s;
+  }
+  button:hover:not(:disabled) { border-color: var(--muted); }
+  button:disabled { opacity: .5; cursor: default; }
+  .cards { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); margin-bottom: 26px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 11px;
+    padding: 16px 18px; box-shadow: var(--shadow);
+  }
+  .card .label { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); font-weight: 600; }
+  .card .value { font-size: 27px; font-weight: 640; margin-top: 6px; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+  .card .value .unit { font-size: 14px; font-weight: 500; color: var(--muted); margin-left: 3px; }
+  .card .meta { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .card.primary .value { color: var(--accent); }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 11px;
+    padding: 18px; box-shadow: var(--shadow);
+  }
+  .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+  .tabs button[aria-selected="true"] { background: var(--text); color: var(--bg); border-color: var(--text); }
+  .chart-wrap { overflow-x: auto; }
+  svg { display: block; width: 100%; height: auto; min-width: 460px; }
+  .legend { display: flex; gap: 18px; margin-top: 12px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .swatch { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+  .msg { color: var(--muted); padding: 40px 0; text-align: center; font-size: 14px; }
+  .msg code { background: var(--grid); padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+  footer { margin-top: 28px; font-size: 12px; color: var(--muted); text-align: center; }
+  footer a { color: inherit; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>SRP Energy Monitor</h1>
+    <div class="spacer"></div>
+    <span class="sub" id="updated"></span>
+    <button id="refresh">Refresh</button>
+    <button id="fetch">Fetch from SRP</button>
+  </header>
+
+  <div class="cards" id="cards"></div>
+
+  <div class="panel">
+    <div class="tabs" id="tabs" role="tablist"></div>
+    <div class="chart-wrap"><svg id="chart" viewBox="0 0 900 340" role="img" aria-label="Energy chart"></svg></div>
+    <div class="legend" id="legend"></div>
+  </div>
+
+  <footer>
+    <a href="/docs">API docs</a> &middot; <a href="/metrics">Prometheus metrics</a> &middot;
+    <a href="/health">Health</a><br>
+    Not affiliated with or endorsed by Salt River Project.
+  </footer>
+</div>
+
+<script>
+const SERIES = [
+  { key: 'demand',     label: 'Peak demand' },
+  { key: 'usage',      label: 'Usage' },
+  { key: 'generation', label: 'Generation' },
+  { key: 'net',        label: 'Net energy' },
+];
+let active = 'demand';
+let days = 30;
+
+const $ = (id) => document.getElementById(id);
+const fmt = (n, p = 2) => (n === null || n === undefined ? '--' : Number(n).toFixed(p));
+
+async function getJSON(url, options) {
+  const res = await fetch(url, options);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `${res.status} ${res.statusText}`);
+  }
+  return res.json();
+}
+
+function renderTabs() {
+  $('tabs').innerHTML = '';
+  for (const s of SERIES) {
+    const b = document.createElement('button');
+    b.textContent = s.label;
+    b.setAttribute('role', 'tab');
+    b.setAttribute('aria-selected', String(s.key === active));
+    b.onclick = () => { active = s.key; renderTabs(); loadChart(); };
+    $('tabs').append(b);
+  }
+}
+
+async function loadCards() {
+  const summary = await getJSON('/api/v1/summary');
+  const cards = [];
+  const peak = summary.latest_peak_demand;
+
+  cards.push(`<div class="card primary">
+    <div class="label">Billing cycle peak</div>
+    <div class="value">${fmt(peak && peak.demand_kw)}<span class="unit">kW</span></div>
+    <div class="meta">${peak ? new Date(peak.observed_at).toLocaleString() : 'not yet collected'}</div>
+  </div>`);
+
+  for (const s of SERIES) {
+    const info = summary.series[s.key];
+    if (!info) continue;
+    cards.push(`<div class="card">
+      <div class="label">${s.label}</div>
+      <div class="value">${info.days}<span class="unit">days</span></div>
+      <div class="meta">through ${info.last_date}</div>
+    </div>`);
+  }
+
+  $('cards').innerHTML = cards.join('');
+  $('updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+}
+
+function renderEmpty(message) {
+  $('chart').innerHTML = '';
+  $('legend').innerHTML = `<div class="msg" style="flex:1">${message}</div>`;
+}
+
+// Hand-rolled SVG bar chart. Deliberately dependency-free so the dashboard
+// works with no network access and nothing to keep up to date.
+function drawChart(data) {
+  const svg = $('chart');
+  const W = 900, H = 340, padL = 54, padR = 16, padT = 16, padB = 46;
+  const n = data.labels.length;
+  if (!n) { renderEmpty('No data for this series yet.'); return; }
+
+  const isDemand = data.series === 'demand';
+  const stacks = isDemand
+    ? [{ values: data.on_peak, color: 'var(--on-peak)', name: `On-peak (${data.unit})` }]
+    : [
+        { values: data.off_peak, color: 'var(--off-peak)', name: `Off-peak (${data.unit})` },
+        { values: data.on_peak,  color: 'var(--on-peak)',  name: `On-peak (${data.unit})` },
+      ];
+
+  // Net energy can go negative when generation exceeds usage, so the scale
+  // has to accommodate a baseline that is not zero.
+  let hi = 0, lo = 0;
+  for (let i = 0; i < n; i++) {
+    let pos = 0, neg = 0;
+    for (const s of stacks) {
+      const v = s.values[i] || 0;
+      if (v >= 0) pos += v; else neg += v;
+    }
+    hi = Math.max(hi, pos); lo = Math.min(lo, neg);
+  }
+  if (hi === 0 && lo === 0) hi = 1;
+  const span = hi - lo || 1;
+  const y = (v) => padT + (hi - v) / span * (H - padT - padB);
+  const plotW = W - padL - padR;
+  const bw = Math.max(2, Math.min(28, plotW / n * 0.68));
+
+  const parts = [];
+
+  // Horizontal gridlines with value labels.
+  const ticks = 5;
+  for (let i = 0; i <= ticks; i++) {
+    const v = lo + (span * i) / ticks;
+    const yy = y(v).toFixed(1);
+    parts.push(`<line x1="${padL}" x2="${W - padR}" y1="${yy}" y2="${yy}" stroke="var(--grid)" stroke-width="1"/>`);
+    parts.push(`<text x="${padL - 9}" y="${yy}" text-anchor="end" dominant-baseline="middle" font-size="11" fill="var(--muted)">${v.toFixed(span < 10 ? 1 : 0)}</text>`);
+  }
+  if (lo < 0) {
+    parts.push(`<line x1="${padL}" x2="${W - padR}" y1="${y(0).toFixed(1)}" y2="${y(0).toFixed(1)}" stroke="var(--muted)" stroke-width="1"/>`);
+  }
+
+  for (let i = 0; i < n; i++) {
+    const cx = padL + plotW * (i + 0.5) / n;
+    const x = cx - bw / 2;
+    let posBase = 0, negBase = 0;
+    for (const s of stacks) {
+      const v = s.values[i];
+      if (v === null || v === undefined || v === 0) continue;
+      let top, height;
+      if (v > 0) { top = y(posBase + v); height = y(posBase) - top; posBase += v; }
+      else { top = y(negBase); height = y(negBase + v) - top; negBase += v; }
+      parts.push(
+        `<rect x="${x.toFixed(1)}" y="${top.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(1, height).toFixed(1)}" fill="${s.color}" rx="1.5">` +
+        `<title>${data.labels[i]} — ${s.name}: ${fmt(v)} ${data.unit}</title></rect>`
+      );
+    }
+
+    // Label roughly every 5th day so the axis stays readable.
+    const every = Math.ceil(n / 12);
+    if (i % every === 0 || i === n - 1) {
+      const d = data.labels[i].slice(5).replace('-', '/');
+      parts.push(`<text x="${cx.toFixed(1)}" y="${H - padB + 18}" text-anchor="middle" font-size="11" fill="var(--muted)">${d}</text>`);
+    }
+  }
+
+  svg.innerHTML = parts.join('');
+  $('legend').innerHTML = stacks
+    .map((s) => `<span><i class="swatch" style="background:${s.color}"></i>${s.name}</span>`)
+    .join('') + `<span style="margin-left:auto">${n} days</span>`;
+}
+
+async function loadChart() {
+  try {
+    drawChart(await getJSON(`/api/v1/series/${active}?days=${days}`));
+  } catch (err) {
+    renderEmpty(`Could not load data: ${err.message}`);
+  }
+}
+
+async function refresh() {
+  try {
+    await loadCards();
+    await loadChart();
+  } catch (err) {
+    renderEmpty(`Could not reach the API: ${err.message}`);
+  }
+}
+
+$('refresh').onclick = refresh;
+$('fetch').onclick = async (e) => {
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  btn.textContent = 'Fetching…';
+  try {
+    const result = await getJSON('/api/v1/fetch', { method: 'POST' });
+    if (result.errors && result.errors.length) alert('Fetch finished with errors:\n' + result.errors.join('\n'));
+    await refresh();
+  } catch (err) {
+    alert('Fetch failed: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Fetch from SRP';
+  }
+};
+
+renderTabs();
+refresh();
+</script>
+</body>
+</html>
