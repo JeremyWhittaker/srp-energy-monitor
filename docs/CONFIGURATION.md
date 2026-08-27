@@ -94,6 +94,29 @@ WantedBy=timers.target
 sudo systemctl enable --now srp-energy-monitor.service srp-fetch.timer
 ```
 
+### Or as a user timer, with no root at all
+
+`deploy/srp-fetch.service` and `deploy/srp-fetch.timer` in this repo are
+ready-made user units. They use `%h` so they work from any home directory:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp deploy/srp-fetch.{service,timer} ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now srp-fetch.timer
+
+# Required, or user timers only run while you are logged in:
+sudo loginctl enable-linger "$USER"
+```
+
+Check it with `systemctl --user list-timers srp-fetch.timer` and read a run
+with `journalctl --user -u srp-fetch.service`.
+
+The unit runs `fetch` and then `hourly --days 2`, and sets
+`SuccessExitStatus=0 1` deliberately: a scrape against someone else's website
+will fail occasionally, and a failed unit that retries tomorrow is better than
+one that flaps.
+
 `RandomizedDelaySec` spreads the load so you are not hitting SRP at the same
 second every morning. `Persistent=true` catches up a run missed while the
 machine was off.

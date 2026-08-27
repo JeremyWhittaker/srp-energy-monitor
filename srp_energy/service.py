@@ -10,12 +10,13 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 from typing import Sequence
 
 from .config import Settings
 from .models import DemandObservation, Series
-from .parser import ParseError, iter_downloads, parse_file
+from .parser import ParseError, iter_downloads, parse_file, parse_hourly_file
 from .storage import Store
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,7 @@ class FetchResult:
     """
 
     readings_written: int = 0
+    intervals_written: int = 0
     series_fetched: list[str] = field(default_factory=list)
     demand: DemandObservation | None = None
     billing_cycle: str | None = None
@@ -37,12 +39,13 @@ class FetchResult:
 
     @property
     def ok(self) -> bool:
-        return bool(self.series_fetched or self.demand)
+        return bool(self.series_fetched or self.demand or self.intervals_written)
 
     def to_dict(self) -> dict[str, object]:
         return {
             "ok": self.ok,
             "readings_written": self.readings_written,
+            "intervals_written": self.intervals_written,
             "series_fetched": self.series_fetched,
             "demand": self.demand.to_dict() if self.demand else None,
             "billing_cycle": self.billing_cycle,
@@ -157,3 +160,77 @@ def import_directory(store: Store, directory: str | Path) -> tuple[int, list[str
         except (ParseError, OSError) as exc:
             errors.append(f"{path.name}: {exc}")
     return written, errors
+
+
+async def fetch_hourly(
+    settings: Settings,
+    store: Store,
+    start: "date",
+    end: "date | None" = None,
+    series: "Sequence[Series] | None" = None,
+    *,
+    max_days_per_request: int = 31,
+) -> FetchResult:
+    """Pull the Hourly/Interval export for a date range and store it.
+
+    Long ranges are requested in chunks: SRP renders every interval in the
+    window into one chart before it will export, and a multi-month request
+    times out rather than failing cleanly.
+    """
+    from datetime import timedelta
+
+    from .client import SRPClient
+
+    username, password = settings.require_credentials()
+    settings.ensure_dirs()
+    end = end or start
+    wanted = list(series) if series else [Series.USAGE]
+    result = FetchResult()
+
+    client = SRPClient(
+        username,
+        password,
+        headless=settings.headless,
+        timeout_ms=settings.timeout_ms,
+        download_timeout_ms=settings.download_timeout_ms,
+    )
+    try:
+        try:
+            await client.start()
+            await client.login()
+        except Exception as exc:
+            logger.error("could not establish an SRP session: %s", exc)
+            result.errors.append(f"login: {exc}")
+            return result
+
+        window_start = start
+        while window_start <= end:
+            window_end = min(window_start + timedelta(days=max_days_per_request - 1), end)
+            for item in wanted:
+                try:
+                    path = await client.download_hourly(
+                        settings.downloads_dir, window_start, window_end, item
+                    )
+                    result.intervals_written += store.upsert_intervals(
+                        parse_hourly_file(path, item)
+                    )
+                    if item.value not in result.series_fetched:
+                        result.series_fetched.append(item.value)
+                    if not settings.keep_downloads:
+                        path.unlink(missing_ok=True)
+                except Exception as exc:
+                    logger.error(
+                        "hourly %s %s..%s failed: %s",
+                        item.value, window_start, window_end, exc,
+                    )
+                    result.errors.append(
+                        f"hourly {item.value} {window_start}..{window_end}: {exc}"
+                    )
+                await asyncio.sleep(1)
+            window_start = window_end + timedelta(days=1)
+            await asyncio.sleep(1)
+    finally:
+        await client.close()
+
+    logger.info("hourly fetch complete: %d intervals", result.intervals_written)
+    return result

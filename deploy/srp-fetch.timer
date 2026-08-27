@@ -1,0 +1,14 @@
+[Unit]
+Description=Fetch SRP energy data daily
+Documentation=https://github.com/JeremyWhittaker/srp-energy-monitor
+
+[Timer]
+# SRP settles the previous day overnight, so mid-morning is safely after it.
+OnCalendar=*-*-* 07:30:00
+# Spread the load so we are not hitting SRP at the same second every day.
+RandomizedDelaySec=1800
+# Catch up a run missed while the machine was off.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

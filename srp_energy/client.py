@@ -23,7 +23,7 @@ import asyncio
 import logging
 import re
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import AsyncIterator, Sequence
 from urllib.parse import urlparse
@@ -479,6 +479,73 @@ class SRPClient:
             f"could not find the {series.label} chart button; refusing to export "
             "because the download would be mislabelled"
         )
+
+    async def download_hourly(
+        self,
+        dest_dir: str | Path,
+        start: date,
+        end: date | None = None,
+        series: Series = Series.USAGE,
+    ) -> Path:
+        """Export the Hourly/Interval view for one series over a date range.
+
+        Unlike the daily exports, this view accepts an explicit range via the
+        two MM/DD/YYYY pickers, so arbitrary history can be pulled a window at
+        a time rather than only what the page happens to be showing.
+
+        The chart selection is explicit because the export follows whichever
+        chart is on screen: without selecting one, the file silently contains
+        whatever SRP happened to show (net energy, by default) under a name
+        implying something else.
+
+        Returns the path, named ``srp_hourly_<series>_<start>_<end>.csv``.
+        """
+        end = end or start
+        if end < start:
+            raise ValueError(f"end date {end} is before start date {start}")
+
+        dest = Path(dest_dir)
+        dest.mkdir(parents=True, exist_ok=True)
+        await self._ensure_usage_page()
+
+        # The tab is a MUI tab, and selecting it re-renders the panel, so every
+        # interaction below uses auto-retrying locators rather than element
+        # handles -- handles detach mid-render and raise.
+        await self.page.get_by_role("tab", name="Hourly/Interval").click()
+        await asyncio.sleep(4)
+
+        await self._select_chart(series)
+
+        pickers = self.page.locator('input[placeholder="MM/DD/YYYY"]:visible')
+        if await pickers.count() < 2:
+            raise ScrapeError(
+                "the Hourly/Interval view did not show two date pickers; "
+                "SRP may have changed the usage page controls"
+            )
+
+        for index, value in ((0, start), (1, end)):
+            box = pickers.nth(index)
+            await box.click()
+            await box.press("Control+a")
+            # Typed rather than filled: the MUI masked input ignores a
+            # programmatic value set and keeps its previous date.
+            await box.type(value.strftime("%m/%d/%Y"), delay=60)
+
+        await self.page.get_by_role("button", name="Submit").filter(
+            visible=True
+        ).first.click()
+        await asyncio.sleep(6)  # the chart must reload before the export matches
+
+        async with self.page.expect_download(timeout=self.download_timeout_ms) as info:
+            await self.page.get_by_role("button", name="Export to Excel").filter(
+                visible=True
+            ).first.click()
+            download = await info.value
+
+        path = dest / f"srp_hourly_{series.value}_{start:%Y%m%d}_{end:%Y%m%d}.csv"
+        await download.save_as(path)
+        logger.info("downloaded hourly %s %s..%s -> %s", series.label, start, end, path)
+        return path
 
     async def download_all(
         self,

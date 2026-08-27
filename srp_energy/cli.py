@@ -74,6 +74,24 @@ def build_parser() -> argparse.ArgumentParser:
     export.add_argument("--days", type=int, help="Limit to the last N days.")
     export.add_argument("-o", "--output", help="Write here instead of stdout.")
 
+    hourly = sub.add_parser("hourly", help="Pull hourly interval data for a date range.")
+    hourly.add_argument(
+        "--start", help="First date, YYYY-MM-DD. Default: --days back from --end."
+    )
+    hourly.add_argument("--end", help="Last date, YYYY-MM-DD. Default: yesterday.")
+    hourly.add_argument(
+        "--days", type=int, default=3,
+        help="How many days back from --end when --start is omitted (default: 3).",
+    )
+    hourly.add_argument(
+        "--series", action="append", choices=[s.value for s in Series],
+        help="Which chart to export; repeatable. Default: usage.",
+    )
+    hourly.add_argument(
+        "--show", action="store_true",
+        help="Print the stored intervals afterwards instead of just a count.",
+    )
+
     imp = sub.add_parser("import", help="Backfill from a folder of SRP CSV exports.")
     imp.add_argument("directory", help="Folder containing srp_<series>_<timestamp>.csv files.")
 
@@ -158,6 +176,13 @@ def _cmd_show(args: argparse.Namespace, settings: Settings, store: Store) -> int
     for name, info in summary["series"].items():  # type: ignore[union-attr]
         print(f"  {name:<11} {info['days']:>4} days  {info['first_date']} .. {info['last_date']}")
 
+    intervals = summary.get("intervals") or {}
+    if intervals.get("count"):
+        print(
+            f"  {'hourly':<11} {intervals['count']:>4} intervals  "
+            f"{intervals['first']} .. {intervals['last']}"
+        )
+
     start = date.today() - timedelta(days=args.days)
     rows = store.readings(
         series=Series.parse(args.series) if args.series else None, start=start
@@ -223,8 +248,46 @@ def _cmd_import(args: argparse.Namespace, settings: Settings, store: Store) -> i
     return 0 if not errors else 1
 
 
+def _cmd_hourly(args: argparse.Namespace, settings: Settings, store: Store) -> int:
+    from .service import fetch_hourly
+
+    # SRP publishes a day once it is complete, so "yesterday" is the newest
+    # date that reliably has all 24 intervals.
+    end = date.fromisoformat(args.end) if args.end else date.today() - timedelta(days=1)
+    start = (
+        date.fromisoformat(args.start)
+        if args.start
+        else end - timedelta(days=max(0, args.days - 1))
+    )
+    if start > end:
+        print(f"--start {start} is after --end {end}", file=sys.stderr)
+        return 2
+
+    wanted = [Series.parse(s) for s in args.series] if args.series else None
+    result = asyncio.run(fetch_hourly(settings, store, start, end, wanted))
+    print(f"Stored {result.intervals_written} hourly intervals for {start} .. {end}")
+    for error in result.errors:
+        print(f"  ! {error}", file=sys.stderr)
+
+    if args.show:
+        rows = store.intervals(start=start, end=end)
+        if rows:
+            print()
+            print(
+                f"{'hour':<17} {'series':<11} {'off-peak':>9} {'on-peak':>9} {'total':>8}"
+            )
+            for r in rows:
+                print(
+                    f"{r.interval_start.strftime('%Y-%m-%d %H:%M'):<17} "
+                    f"{r.series.value:<11} "
+                    f"{_fmt(r.off_peak):>9} {_fmt(r.on_peak):>9} {_fmt(r.total):>8}"
+                )
+    return 0 if result.ok else 1
+
+
 _COMMANDS = {
     "fetch": _cmd_fetch,
+    "hourly": _cmd_hourly,
     "serve": _cmd_serve,
     "show": _cmd_show,
     "export": _cmd_export,

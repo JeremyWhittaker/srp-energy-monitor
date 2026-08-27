@@ -127,3 +127,41 @@ class DemandObservation:
             "is_average": self.is_average,
             "source": self.source,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class IntervalReading:
+    """One hourly interval, from SRP's Hourly/Interval export.
+
+    SRP reports intervals as a local wall-clock time with no zone or offset, so
+    ``interval_start`` is naive and means Arizona local time. Arizona does not
+    observe daylight saving, which is the only reason a naive timestamp is safe
+    here -- there are no repeated or missing hours to disambiguate.
+    """
+
+    series: Series
+    interval_start: datetime
+    off_peak: float | None = None
+    on_peak: float | None = None
+
+    @property
+    def usage_date(self) -> date:
+        return self.interval_start.date()
+
+    @property
+    def total(self) -> float | None:
+        if self.off_peak is None and self.on_peak is None:
+            return None
+        return (self.off_peak or 0.0) + (self.on_peak or 0.0)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "series": self.series.value,
+            "interval_start": self.interval_start.isoformat(),
+            "usage_date": self.usage_date.isoformat(),
+            "hour": self.interval_start.hour,
+            "off_peak": self.off_peak,
+            "on_peak": self.on_peak,
+            "total": self.total,
+            "unit": self.series.unit,
+        }

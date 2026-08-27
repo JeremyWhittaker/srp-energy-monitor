@@ -22,7 +22,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Iterable, Iterator, Sequence
 
-from .models import DailyReading, Series
+from .models import DailyReading, IntervalReading, Series
 
 # Accepted date formats, most likely first. SRP uses m/d/Y in every export
 # observed so far, but it has shipped ISO dates in the past.
@@ -216,3 +216,118 @@ def iter_downloads(directory: str | Path) -> Iterator[tuple[Path, Series]]:
         series = series_from_filename(path.name)
         if series is not None:
             yield path, series
+
+
+# --------------------------------------------------------------------------
+# Hourly / interval exports
+# --------------------------------------------------------------------------
+
+# The hourly export has its own shape:
+#
+#     Usage date,Interval,Off-peak kWh,On-peak kWh
+#     8/25/2026,12:0 AM,"15.4","0"
+#
+# Note the ragged clock format -- SRP writes "12:0 AM", not "12:00 AM" -- so
+# the minute field cannot be assumed two digits.
+_INTERVAL_KEYS = ("interval", "time", "hour")
+
+_TIME_FORMATS = ("%I:%M %p", "%I:%M%p", "%H:%M", "%I %p")
+
+
+def _to_time(raw: str | None):
+    """Parse an SRP interval label into a time.
+
+    Accepts the zero-padded and unpadded variants SRP mixes ("12:0 AM",
+    "12:00 AM", "13:00").
+    """
+    from datetime import time as _time
+
+    if not raw:
+        return None
+    text = raw.strip().strip('"').upper().replace(".", "")
+    text = " ".join(text.split())
+    # Normalise "12:0 AM" -> "12:00 AM" so %M matches.
+    if ":" in text:
+        head, _, tail = text.partition(":")
+        minute, _, suffix = tail.partition(" ")
+        if minute.isdigit():
+            text = f"{head}:{int(minute):02d}" + (f" {suffix}" if suffix else "")
+    for fmt in _TIME_FORMATS:
+        try:
+            return datetime.strptime(text, fmt).time()
+        except ValueError:
+            continue
+    return None
+
+
+def parse_hourly_csv(text: str, series: Series) -> list[IntervalReading]:
+    """Parse an SRP Hourly/Interval export into interval readings.
+
+    The hourly export carries no marker of which chart produced it, so the
+    caller must say. That is always knowable, because the caller chose which
+    chart to select before exporting.
+
+    Raises:
+        ParseError: if the file has no recognisable date or interval column.
+    """
+    reader = csv.DictReader(io.StringIO(text.lstrip("\ufeff")))
+    headers = reader.fieldnames or []
+    if not headers:
+        raise ParseError("CSV is empty")
+
+    readings: list[IntervalReading] = []
+    saw_interval = False
+
+    for raw_row in reader:
+        row = _normalise(raw_row)
+        if not row:
+            continue
+        if any("combined total" in value.lower() for value in row.values()):
+            continue
+
+        day = _to_date(_pick(row, _USAGE_DATE_KEYS) or _pick(row, _METER_DATE_KEYS))
+        clock = _to_time(_pick(row, _INTERVAL_KEYS))
+        if day is None or clock is None:
+            continue
+        saw_interval = True
+
+        readings.append(
+            IntervalReading(
+                series=series,
+                interval_start=datetime.combine(day, clock),
+                off_peak=_to_float(_pick(row, _OFF_PEAK_KEYS)),
+                on_peak=_to_float(_pick(row, _ON_PEAK_KWH_KEYS)),
+            )
+        )
+
+    if not saw_interval:
+        raise ParseError(
+            f"no usable date+interval columns found; headers were {headers!r}"
+        )
+
+    readings.sort(key=lambda r: r.interval_start)
+    return readings
+
+
+def parse_hourly_file(path: str | Path, series: Series | None = None) -> list[IntervalReading]:
+    """Parse an hourly export, recovering the series from the filename if needed."""
+    path = Path(path)
+    if series is None:
+        series = series_from_hourly_filename(path.name)
+    if series is None:
+        raise ParseError(
+            f"cannot tell which chart {path.name} came from; pass series= explicitly"
+        )
+    return parse_hourly_csv(path.read_text(encoding="utf-8-sig"), series)
+
+
+def series_from_hourly_filename(name: str) -> Series | None:
+    """Recover the series from ``srp_hourly_<series>_<start>_<end>.csv``."""
+    stem = Path(name).stem.lower()
+    if not stem.startswith("srp_hourly_"):
+        return None
+    rest = stem[len("srp_hourly_"):]
+    for candidate in Series:
+        if rest.startswith(f"{candidate.value}_"):
+            return candidate
+    return None

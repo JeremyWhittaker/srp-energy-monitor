@@ -1,0 +1,15 @@
+[Unit]
+Description=Fetch SRP energy data (daily figure, series, and yesterday's hourly)
+Documentation=https://github.com/JeremyWhittaker/srp-energy-monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/projects/srp-energy-monitor
+ExecStart=%h/projects/srp-energy-monitor/.venv/bin/srp-energy-monitor fetch
+ExecStart=%h/projects/srp-energy-monitor/.venv/bin/srp-energy-monitor hourly --days 2
+# A scrape against someone else's website will fail sometimes; let the timer
+# retry tomorrow rather than flapping the unit.
+SuccessExitStatus=0 1
+TimeoutStartSec=900

@@ -78,6 +78,7 @@ $EDITOR .env                     # set SRP_USERNAME and SRP_PASSWORD
 
 ```bash
 srp-energy-monitor fetch      # log in, pull all four series + the demand figure, store
+srp-energy-monitor hourly     # pull hourly interval data for a date range
 srp-energy-monitor show       # print what's in the database
 srp-energy-monitor serve      # REST API + dashboard on http://127.0.0.1:8000
 srp-energy-monitor export --format json --series demand
@@ -94,6 +95,34 @@ $ srp-energy-monitor fetch
 2026-08-26 16:20:11 INFO    srp_energy.service: fetch complete: 124 readings across ['usage', 'generation', 'net', 'demand']
 Current Average On-Peak Demand: 5.40 kW
 Stored 124 readings across 4 series: usage, generation, net, demand
+```
+
+### Hourly data
+
+SRP's Hourly/Interval view exposes per-hour kWh and accepts an explicit date
+range, so history can be pulled a window at a time:
+
+```bash
+srp-energy-monitor hourly --days 3                      # last 3 days, usage
+srp-energy-monitor hourly --start 2026-08-01 --end 2026-08-25
+srp-energy-monitor hourly --days 2 --series usage --series net --show
+```
+
+Each series is exported separately, because the hourly export follows whichever
+chart is on screen — without selecting one you silently get net energy under a
+name implying something else. Default is `usage`.
+
+Timestamps are Arizona local time. That needs no offset precisely because
+Arizona does not observe daylight saving, so there are no repeated or missing
+hours to disambiguate.
+
+```console
+$ srp-energy-monitor hourly --days 1 --show
+Stored 24 hourly intervals for 2026-08-25 .. 2026-08-25
+
+hour              series       off-peak   on-peak    total
+2026-08-25 13:00  usage            4.80      0.00     4.80
+2026-08-25 14:00  usage            0.00      3.50     3.50
 ```
 
 ### Keep it current
@@ -117,6 +146,7 @@ Re-running a fetch is safe: readings upsert on `(series, date)`, so re-imports c
 | `GET /api/v1/demand` | Latest bill-cycle demand figure, with SRP's caption |
 | `GET /api/v1/demand/history?days=30` | Demand observations over time |
 | `GET /api/v1/readings?series=&start=&end=` | Daily readings, filterable |
+| `GET /api/v1/intervals?series=&start=&end=` | Hourly interval readings |
 | `GET /api/v1/series/{series}?days=30` | One series, shaped for charting |
 | `GET /api/v1/summary` | Row counts and date coverage |
 | `POST /api/v1/fetch` | Trigger a scrape now |
@@ -199,7 +229,8 @@ The design point is that **only `client.py` touches a browser**. Parsing, storag
 
 - **Cloudflare fronts the portal.** A default Playwright browser is refused outright with an "Access Denied / Ray ID" page before SRP serves any markup. The client therefore presents a realistic desktop fingerprint (real user agent, 1440×900 viewport, `America/Phoenix` timezone, no `navigator.webdriver` flag). This is presentation, not evasion of an access control — the scraper still signs in with your own credentials to read your own data. If Cloudflare tightens further, this is the first thing that will break.
 - **The headline demand figure means different things on different plans.** It is an average on some price plans and a maximum on others, so it is stored and served with SRP's own caption (`label`, `is_average`) rather than a hard-coded meaning. If SRP restyles that card so the caption cannot be read, the value is still recorded but `label` is `null` and a warning is logged — do not assume a peak in that case.
-- **No date-range selection.** SRP's export gives you whatever window the portal is showing, typically the last ~31 days. There is no way to request an arbitrary historical range, so deep history has to be accumulated by fetching regularly. If you have old exports, `srp-energy-monitor import` will backfill them.
+- **Daily exports have no date-range control.** The four daily series give you whatever window the portal is showing, typically the last ~31 days. The *hourly* view does accept an explicit range (`srp-energy-monitor hourly --start --end`), so it is the way to reach further back. If you have old daily exports, `srp-energy-monitor import` will backfill them.
+- **Hourly requests are chunked.** SRP renders every interval in the window before it will export, so a multi-month request times out. `fetch_hourly` splits long ranges into 31-day windows automatically.
 - **No MFA support.** See above.
 - **Single account.** If your login has multiple SRP accounts or meters, the scraper takes whichever the portal defaults to.
 - **Scraping is inherently fragile.** SRP can change their markup at any time. When a fetch starts failing, run `srp-energy-monitor fetch --show-browser` to watch it happen, then update the selector cascades in `client.py`.

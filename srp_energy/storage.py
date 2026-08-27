@@ -22,13 +22,13 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import contextmanager
-from datetime import date, datetime
+from datetime import date, datetime, time
 from pathlib import Path
 from typing import Iterable, Iterator, Sequence
 
-from .models import DailyReading, DemandObservation, Series
+from .models import DailyReading, DemandObservation, IntervalReading, Series
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS daily_reading (
@@ -50,6 +50,15 @@ CREATE TABLE IF NOT EXISTS demand_observation (
     source      TEXT
 );
 
+CREATE TABLE IF NOT EXISTS interval_reading (
+    series         TEXT NOT NULL,
+    interval_start TEXT NOT NULL,
+    off_peak       REAL,
+    on_peak        REAL,
+    updated_at     TEXT NOT NULL,
+    PRIMARY KEY (series, interval_start)
+);
+
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -57,6 +66,7 @@ CREATE TABLE IF NOT EXISTS meta (
 
 CREATE INDEX IF NOT EXISTS idx_daily_date ON daily_reading(usage_date);
 CREATE INDEX IF NOT EXISTS idx_demand_time ON demand_observation(observed_at);
+CREATE INDEX IF NOT EXISTS idx_interval_start ON interval_reading(interval_start);
 """
 
 
@@ -152,6 +162,35 @@ class Store:
             )
         return len(rows)
 
+    def upsert_intervals(self, readings: Iterable[IntervalReading]) -> int:
+        """Insert or update hourly intervals, keyed on the interval start."""
+        rows = [
+            (
+                r.series.value,
+                r.interval_start.isoformat(timespec="minutes"),
+                r.off_peak,
+                r.on_peak,
+                datetime.now().isoformat(timespec="seconds"),
+            )
+            for r in readings
+        ]
+        if not rows:
+            return 0
+        with self.connect() as conn:
+            conn.executemany(
+                """
+                INSERT INTO interval_reading
+                    (series, interval_start, off_peak, on_peak, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(series, interval_start) DO UPDATE SET
+                    off_peak   = excluded.off_peak,
+                    on_peak    = excluded.on_peak,
+                    updated_at = excluded.updated_at
+                """,
+                rows,
+            )
+        return len(rows)
+
     def record_demand(self, observation: DemandObservation) -> None:
         with self.connect() as conn:
             conn.execute(
@@ -213,6 +252,52 @@ class Store:
             rows = conn.execute(sql, params).fetchall()
         return [_row_to_reading(row) for row in rows]
 
+    def intervals(
+        self,
+        series: Series | None = None,
+        start: date | None = None,
+        end: date | None = None,
+        limit: int | None = None,
+    ) -> list[IntervalReading]:
+        """Query hourly intervals, oldest first.
+
+        ``start``/``end`` are inclusive dates; ``end`` covers the whole day, so
+        asking for a single date returns its 24 intervals.
+        """
+        clauses: list[str] = []
+        params: list[object] = []
+        if series is not None:
+            clauses.append("series = ?")
+            params.append(series.value)
+        if start is not None:
+            clauses.append("interval_start >= ?")
+            params.append(datetime.combine(start, time.min).isoformat(timespec="minutes"))
+        if end is not None:
+            clauses.append("interval_start <= ?")
+            params.append(datetime.combine(end, time.max).isoformat(timespec="minutes"))
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+
+        if limit is None:
+            sql = f"SELECT * FROM interval_reading{where} ORDER BY interval_start ASC, series ASC"
+        else:
+            sql = (
+                f"SELECT * FROM (SELECT * FROM interval_reading{where}"
+                " ORDER BY interval_start DESC LIMIT ?) ORDER BY interval_start ASC, series ASC"
+            )
+            params.append(limit)
+
+        with self.connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [
+            IntervalReading(
+                series=Series(r["series"]),
+                interval_start=datetime.fromisoformat(r["interval_start"]),
+                off_peak=r["off_peak"],
+                on_peak=r["on_peak"],
+            )
+            for r in rows
+        ]
+
     def latest_demand(self) -> DemandObservation | None:
         with self.connect() as conn:
             row = conn.execute(
@@ -254,6 +339,10 @@ class Store:
             demand_count = conn.execute(
                 "SELECT COUNT(*) FROM demand_observation"
             ).fetchone()[0]
+            interval_row = conn.execute(
+                "SELECT COUNT(*) AS n, MIN(interval_start) AS first, MAX(interval_start) AS last"
+                " FROM interval_reading"
+            ).fetchone()
 
         latest = self.latest_demand()
         return {
@@ -267,6 +356,11 @@ class Store:
                     "updated_at": row["updated_at"],
                 }
                 for row in per_series
+            },
+            "intervals": {
+                "count": interval_row["n"],
+                "first": interval_row["first"],
+                "last": interval_row["last"],
             },
             "demand_observations": demand_count,
             "latest_demand": latest.to_dict() if latest else None,

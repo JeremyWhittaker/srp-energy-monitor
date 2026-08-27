@@ -131,6 +131,33 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
         }
 
     @app.get(
+        f"{API_PREFIX}/intervals",
+        tags=["readings"],
+        summary="Hourly interval readings",
+        description=(
+            "Hourly kWh from SRP's Hourly/Interval export. Timestamps are "
+            "Arizona local time, which needs no offset because the state does "
+            "not observe daylight saving."
+        ),
+    )
+    async def intervals(
+        series: str | None = Query(
+            None, description="usage, generation, net or demand. Omit for all."
+        ),
+        start: date | None = Query(None, description="Earliest date (inclusive)."),
+        end: date | None = Query(None, description="Latest date (inclusive)."),
+        limit: int | None = Query(None, ge=1, le=100_000),
+    ) -> dict[str, Any]:
+        rows = store.intervals(
+            series=_parse_series(series), start=start, end=end, limit=limit
+        )
+        return {
+            "count": len(rows),
+            "unit": "kWh",
+            "intervals": [r.to_dict() for r in rows],
+        }
+
+    @app.get(
         f"{API_PREFIX}/readings",
         tags=["readings"],
         summary="Daily readings for one or all series",
