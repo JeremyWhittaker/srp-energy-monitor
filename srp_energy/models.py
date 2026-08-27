@@ -165,3 +165,29 @@ class IntervalReading:
             "total": self.total,
             "unit": self.series.unit,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class BillProjection:
+    """SRP's projected bill amount for the cycle in progress.
+
+    The portal shows this as a bare dollar figure captioned "projected bill
+    amount", alongside a sentence naming the month projected and the usage date
+    the projection runs through. That sentence is captured as ``basis`` because
+    the number alone is undated -- a projection "through 8/25" means something
+    different on the 26th than on the 3rd of the next month.
+    """
+
+    observed_at: datetime
+    amount_usd: float
+    basis: str | None = None
+    source: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "observed_at": self.observed_at.isoformat(),
+            "amount_usd": self.amount_usd,
+            "currency": "USD",
+            "basis": self.basis,
+            "source": self.source,
+        }

@@ -131,6 +131,34 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
         }
 
     @app.get(
+        f"{API_PREFIX}/bill-projection",
+        tags=["demand"],
+        summary="SRP's projected bill amount for the cycle in progress",
+    )
+    async def bill_projection() -> dict[str, Any]:
+        latest = store.latest_bill_projection()
+        if latest is None:
+            raise HTTPException(
+                status_code=404,
+                detail="no bill projection recorded yet; run a fetch first",
+            )
+        return latest.to_dict()
+
+    @app.get(
+        f"{API_PREFIX}/bill-projection/history",
+        tags=["demand"],
+        summary="Bill projection over time",
+    )
+    async def bill_projection_history(
+        days: int = Query(30, ge=1, le=3650),
+        limit: int = Query(500, ge=1, le=10_000),
+    ) -> dict[str, Any]:
+        since = datetime.now() - timedelta(days=days)
+        rows = store.bill_projection_history(start=since, limit=limit)
+        return {"count": len(rows), "currency": "USD",
+                "projections": [r.to_dict() for r in rows]}
+
+    @app.get(
         f"{API_PREFIX}/intervals",
         tags=["readings"],
         summary="Hourly interval readings",
@@ -314,6 +342,15 @@ def _render_metrics(store: Store) -> str:
         "gauge",
         energy_samples,
     )
+
+    projection = store.latest_bill_projection()
+    if projection is not None:
+        add(
+            "srp_projected_bill_dollars",
+            "SRP's projected bill amount for the billing cycle in progress.",
+            "gauge",
+            [("", projection.amount_usd)],
+        )
 
     summary = store.summary()
     add(

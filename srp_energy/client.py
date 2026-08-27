@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import AsyncIterator, Sequence
 from urllib.parse import urlparse
 
-from .models import DemandObservation, Series
+from .models import BillProjection, DemandObservation, Series
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +158,45 @@ _BILLING_CYCLE_JS = """
 () => {
     const match = (document.body.innerText || '').match(/Billing cycle[^.\\n]{0,80}/i);
     return match ? match[0].trim() : null;
+}
+"""
+
+
+# Reads the projected bill amount and the sentence explaining what it is based
+# on. SRP renders it as a bare "$430" with the caption in a sibling node, so the
+# value alone is not self-describing.
+_BILL_PROJECTION_JS = r"""
+() => {
+    const money = /^\$([\d,]+(?:\.\d{2})?)$/;
+    for (const el of document.querySelectorAll('*')) {
+        if (el.children.length !== 0) continue;
+        const m = (el.textContent || '').trim().match(money);
+        if (!m) continue;
+
+        // Only accept a figure whose surrounding card calls it a projection --
+        // the same markup shape is used for the amount currently due. Keep
+        // climbing past the first match: the caption sits in a tight wrapper,
+        // but the sentence explaining what the projection is based on lives a
+        // couple of levels further out.
+        let node = el, captioned = false, basis = null;
+        for (let i = 0; i < 6 && node; i++) {
+            node = node.parentElement;
+            if (!node) break;
+            const context = (node.textContent || '').replace(/\s+/g, ' ').trim();
+            if (/projected bill amount/i.test(context)) captioned = true;
+            const sentence = context.match(/Your [^.]{0,140}projection[^.]{0,200}\./i);
+            if (sentence && !basis) basis = sentence[0].trim();
+            if (captioned && basis) break;
+        }
+        if (captioned) {
+            return {
+                amount: parseFloat(m[1].replace(/,/g, '')),
+                basis: basis,
+                source: el.className ? `.${String(el.className).split(/\s+/).join('.')}` : el.tagName,
+            };
+        }
+    }
+    return { amount: null, basis: null, source: null };
 }
 """
 
@@ -410,6 +449,31 @@ class SRPClient:
                 "this value as unlabelled rather than assuming it is a peak"
             )
         return observation
+
+    async def fetch_bill_projection(self) -> BillProjection:
+        """Read SRP's projected bill amount for the cycle in progress."""
+        await self._ensure_usage_page()
+
+        result = await self.page.evaluate(_BILL_PROJECTION_JS)
+        if result.get("amount") is None:
+            raise ScrapeError(
+                "could not find a projected bill amount on the SRP usage page; "
+                "SRP most likely changed that card's markup (see "
+                "_BILL_PROJECTION_JS in srp_energy/client.py)"
+            )
+
+        projection = BillProjection(
+            observed_at=datetime.now(),
+            amount_usd=float(result["amount"]),
+            basis=result.get("basis"),
+            source=result.get("source"),
+        )
+        logger.info(
+            "projected bill $%.2f%s",
+            projection.amount_usd,
+            f" -- {projection.basis}" if projection.basis else "",
+        )
+        return projection
 
     async def fetch_billing_cycle(self) -> str | None:
         """Return the billing-cycle description shown beside the demand figure."""

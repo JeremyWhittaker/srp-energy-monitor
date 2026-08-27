@@ -144,3 +144,33 @@ def test_peak_demand_404_on_empty_database(tmp_path):
 
     assert empty.get("/api/v1/demand").status_code == 404
     assert empty.get("/metrics").text.startswith("# no SRP data")
+
+
+def test_bill_projection_endpoint_and_metric(tmp_path):
+    from srp_energy.models import BillProjection
+
+    store = Store(tmp_path / "bill.db")
+    store.record_bill_projection(
+        BillProjection(
+            observed_at=datetime(2026, 8, 26, 17, 28),
+            amount_usd=430.0,
+            basis="Your September bill projection is based on your usage through 8/25/26.",
+            source=".h4.text-white",
+        )
+    )
+    c = TestClient(create_app(Settings(database_path=tmp_path / "bill.db"), store))
+
+    body = c.get("/api/v1/bill-projection").json()
+    assert body["amount_usd"] == 430.0
+    assert body["currency"] == "USD"
+    assert "September" in body["basis"]
+
+    assert "srp_projected_bill_dollars 430.0" in c.get("/metrics").text
+    assert c.get("/api/v1/bill-projection/history").json()["count"] == 1
+
+
+def test_bill_projection_404_before_any_fetch(tmp_path):
+    store = Store(tmp_path / "nobill.db")
+    c = TestClient(create_app(Settings(database_path=tmp_path / "nobill.db"), store))
+
+    assert c.get("/api/v1/bill-projection").status_code == 404

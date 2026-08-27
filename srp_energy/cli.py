@@ -123,6 +123,9 @@ def _cmd_fetch(args: argparse.Namespace, settings: Settings, store: Store) -> in
     if result.demand:
         d = result.demand
         print(f"{d.label or 'Current demand'}: {d.demand_kw:.2f} kW")
+    if result.bill_projection:
+        b = result.bill_projection
+        print(f"Projected bill: ${b.amount_usd:,.2f}" + (f"  ({b.basis})" if b.basis else ""))
     if result.billing_cycle:
         print(result.billing_cycle)
     print(
@@ -175,6 +178,12 @@ def _cmd_show(args: argparse.Namespace, settings: Settings, store: Store) -> int
     print()
     for name, info in summary["series"].items():  # type: ignore[union-attr]
         print(f"  {name:<11} {info['days']:>4} days  {info['first_date']} .. {info['last_date']}")
+
+    projection = summary.get("latest_bill_projection")
+    if projection:
+        print(f"Projected bill: ${projection['amount_usd']:,.2f}")
+        if projection.get("basis"):
+            print(f"  {projection['basis']}")
 
     intervals = summary.get("intervals") or {}
     if intervals.get("count"):

@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Sequence
 
 from .config import Settings
-from .models import DemandObservation, Series
+from .models import BillProjection, DemandObservation, Series
 from .parser import ParseError, iter_downloads, parse_file, parse_hourly_file
 from .storage import Store
 
@@ -34,6 +34,7 @@ class FetchResult:
     intervals_written: int = 0
     series_fetched: list[str] = field(default_factory=list)
     demand: DemandObservation | None = None
+    bill_projection: BillProjection | None = None
     billing_cycle: str | None = None
     errors: list[str] = field(default_factory=list)
 
@@ -48,6 +49,9 @@ class FetchResult:
             "intervals_written": self.intervals_written,
             "series_fetched": self.series_fetched,
             "demand": self.demand.to_dict() if self.demand else None,
+            "bill_projection": (
+                self.bill_projection.to_dict() if self.bill_projection else None
+            ),
             "billing_cycle": self.billing_cycle,
             "errors": self.errors,
         }
@@ -99,6 +103,14 @@ async def fetch_and_store(
             except Exception as exc:
                 logger.error("demand fetch failed: %s", exc)
                 result.errors.append(f"demand: {exc}")
+
+            try:
+                projection = await client.fetch_bill_projection()
+                store.record_bill_projection(projection)
+                result.bill_projection = projection
+            except Exception as exc:
+                logger.error("bill projection fetch failed: %s", exc)
+                result.errors.append(f"bill_projection: {exc}")
 
             try:
                 result.billing_cycle = await client.fetch_billing_cycle()

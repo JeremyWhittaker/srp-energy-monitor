@@ -44,7 +44,9 @@ Which means you can alert on it, chart it against temperature, feed it to Home A
 
 Every series also carries the day's high and low temperature, which SRP includes in its exports and which is most of what you need to explain a usage spike.
 
-Plus a live scrape of the **current bill cycle's headline demand figure** — with the caption SRP published it under — recorded as a time series so you can watch it move through the month.
+Two more live scrapes from the same page: SRP's **projected bill amount** for
+the cycle in progress (with the sentence saying what month and through what
+date it projects), and the **current bill cycle's headline demand figure** — with the caption SRP published it under — recorded as a time series so you can watch it move through the month.
 
 ---
 
@@ -106,11 +108,17 @@ range, so history can be pulled a window at a time:
 srp-energy-monitor hourly --days 3                      # last 3 days, usage
 srp-energy-monitor hourly --start 2026-08-01 --end 2026-08-25
 srp-energy-monitor hourly --days 2 --series usage --series net --show
+srp-energy-monitor hourly --days 1 \
+    --series usage --series generation --series net --series demand
 ```
 
 Each series is exported separately, because the hourly export follows whichever
 chart is on screen — without selecting one you silently get net energy under a
 name implying something else. Default is `usage`.
+
+**Demand intervals are half-hourly, not hourly**, and are measured in kW rather
+than kWh — that is the granularity demand charges are actually assessed on, so a
+day of demand is 48 rows while the three energy series are 24.
 
 Timestamps are Arizona local time. That needs no offset precisely because
 Arizona does not observe daylight saving, so there are no repeated or missing
@@ -145,6 +153,8 @@ Re-running a fetch is safe: readings upsert on `(series, date)`, so re-imports c
 |---|---|
 | `GET /api/v1/demand` | Latest bill-cycle demand figure, with SRP's caption |
 | `GET /api/v1/demand/history?days=30` | Demand observations over time |
+| `GET /api/v1/bill-projection` | SRP's projected bill amount for this cycle |
+| `GET /api/v1/bill-projection/history?days=30` | Projection over time |
 | `GET /api/v1/readings?series=&start=&end=` | Daily readings, filterable |
 | `GET /api/v1/intervals?series=&start=&end=` | Hourly interval readings |
 | `GET /api/v1/series/{series}?days=30` | One series, shaped for charting |
@@ -183,7 +193,7 @@ scrape_configs:
       - targets: ['localhost:8000']
 ```
 
-Exposed metrics: `srp_current_demand_kw{label,is_average}`, `srp_current_demand_observed_timestamp_seconds`, `srp_daily_on_peak_demand_kw{date}`, `srp_daily_energy_kwh{series,period,date}`, `srp_readings_total{series}`.
+Exposed metrics: `srp_projected_bill_dollars`, `srp_current_demand_kw{label,is_average}`, `srp_current_demand_observed_timestamp_seconds`, `srp_daily_on_peak_demand_kw{date}`, `srp_daily_energy_kwh{series,period,date}`, `srp_readings_total{series}`.
 
 The `label` and `is_average` labels on `srp_current_demand_kw` carry SRP's own caption, so an alert rule can assert which quantity it is reading rather than assuming.
 

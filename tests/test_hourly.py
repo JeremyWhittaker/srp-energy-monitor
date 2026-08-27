@@ -184,3 +184,51 @@ def test_interval_unit_follows_the_series(store):
 
     assert usage.to_dict()["unit"] == "kWh"
     assert demand.to_dict()["unit"] == "kW"
+
+
+# ----------------------------------------------------- demand intervals (kW)
+
+DEMAND_FIXTURE = (
+    Path(__file__).parent / "fixtures" / "srp_hourly_demand_20260825_20260825.csv"
+)
+
+
+def test_demand_intervals_parse_their_kw_columns():
+    """Regression: the demand export is headed kW, not kWh.
+
+    Matching only the kWh spellings parsed every row to None, so 48 half-hours
+    of real data were stored blank without any error.
+    """
+    readings = parse_hourly_file(DEMAND_FIXTURE, Series.DEMAND)
+
+    assert len(readings) == 48
+    assert all(
+        r.off_peak is not None or r.on_peak is not None for r in readings
+    ), "no row may come back with both values empty"
+    assert readings[0].off_peak == 5.0
+    assert readings[0].to_dict()["unit"] == "kW"
+
+
+def test_demand_intervals_are_half_hourly():
+    """SRP reports demand every 30 minutes, which is how demand charges work."""
+    readings = parse_hourly_file(DEMAND_FIXTURE, Series.DEMAND)
+
+    minutes = {r.interval_start.minute for r in readings}
+    assert minutes == {0, 30}
+    assert readings[1].interval_start == datetime(2026, 8, 25, 0, 30)
+
+
+def test_a_row_with_no_recognisable_value_column_fails_loudly():
+    """Silently storing blanks is what made the kW bug invisible."""
+    text = (
+        "Usage date,Interval,Some Other Column\n"
+        '8/25/2026,12:0 AM,"5"\n'
+    )
+    with pytest.raises(ParseError, match="no value in"):
+        parse_hourly_csv(text, Series.USAGE)
+
+
+def test_half_hour_intervals_do_not_collide_in_storage(store):
+    store.upsert_intervals(parse_hourly_file(DEMAND_FIXTURE, Series.DEMAND))
+
+    assert len(store.intervals(series=Series.DEMAND)) == 48

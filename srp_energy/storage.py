@@ -26,9 +26,9 @@ from datetime import date, datetime, time
 from pathlib import Path
 from typing import Iterable, Iterator, Sequence
 
-from .models import DailyReading, DemandObservation, IntervalReading, Series
+from .models import BillProjection, DailyReading, DemandObservation, IntervalReading, Series
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS daily_reading (
@@ -57,6 +57,13 @@ CREATE TABLE IF NOT EXISTS interval_reading (
     on_peak        REAL,
     updated_at     TEXT NOT NULL,
     PRIMARY KEY (series, interval_start)
+);
+
+CREATE TABLE IF NOT EXISTS bill_projection (
+    observed_at TEXT PRIMARY KEY,
+    amount_usd  REAL NOT NULL,
+    basis       TEXT,
+    source      TEXT
 );
 
 CREATE TABLE IF NOT EXISTS meta (
@@ -190,6 +197,40 @@ class Store:
                 rows,
             )
         return len(rows)
+
+    def record_bill_projection(self, projection: BillProjection) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO bill_projection"
+                " (observed_at, amount_usd, basis, source) VALUES (?, ?, ?, ?)",
+                (
+                    projection.observed_at.isoformat(timespec="seconds"),
+                    projection.amount_usd,
+                    projection.basis,
+                    projection.source,
+                ),
+            )
+
+    def latest_bill_projection(self) -> BillProjection | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM bill_projection ORDER BY observed_at DESC LIMIT 1"
+            ).fetchone()
+        return _row_to_projection(row) if row else None
+
+    def bill_projection_history(
+        self, start: datetime | None = None, limit: int = 500
+    ) -> list[BillProjection]:
+        sql = "SELECT * FROM bill_projection"
+        params: list[object] = []
+        if start is not None:
+            sql += " WHERE observed_at >= ?"
+            params.append(start.isoformat(timespec="seconds"))
+        sql += " ORDER BY observed_at DESC LIMIT ?"
+        params.append(limit)
+        with self.connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [_row_to_projection(r) for r in rows]
 
     def record_demand(self, observation: DemandObservation) -> None:
         with self.connect() as conn:
@@ -345,6 +386,7 @@ class Store:
             ).fetchone()
 
         latest = self.latest_demand()
+        projection = self.latest_bill_projection()
         return {
             "database": str(self.path),
             "schema_version": SCHEMA_VERSION,
@@ -364,6 +406,7 @@ class Store:
             },
             "demand_observations": demand_count,
             "latest_demand": latest.to_dict() if latest else None,
+            "latest_bill_projection": projection.to_dict() if projection else None,
         }
 
 
@@ -378,6 +421,15 @@ def _row_to_reading(row: sqlite3.Row) -> DailyReading:
         on_peak=row["on_peak"],
         high_temp_f=row["high_temp_f"],
         low_temp_f=row["low_temp_f"],
+    )
+
+
+def _row_to_projection(row: sqlite3.Row) -> BillProjection:
+    return BillProjection(
+        observed_at=datetime.fromisoformat(row["observed_at"]),
+        amount_usd=row["amount_usd"],
+        basis=row["basis"],
+        source=row["source"],
     )
 
 

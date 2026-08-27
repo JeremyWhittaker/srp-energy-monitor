@@ -35,6 +35,7 @@ _METER_DATE_KEYS = ("meter read date", "read date")
 _OFF_PEAK_KEYS = ("off-peak kwh", "off peak kwh", "offpeak kwh")
 _ON_PEAK_KWH_KEYS = ("on-peak kwh", "on peak kwh", "onpeak kwh")
 _ON_PEAK_KW_KEYS = ("on-peak kw", "on peak kw", "onpeak kw", "peak demand kw")
+_OFF_PEAK_KW_KEYS = ("off-peak kw", "off peak kw", "offpeak kw")
 _HIGH_TEMP_KEYS = ("high temperature (f)", "high temperature", "high temp (f)", "high temp")
 _LOW_TEMP_KEYS = ("low temperature (f)", "low temperature", "low temp (f)", "low temp")
 
@@ -291,12 +292,30 @@ def parse_hourly_csv(text: str, series: Series) -> list[IntervalReading]:
             continue
         saw_interval = True
 
+        # The demand interval export is measured in kW, not kWh, so its columns
+        # are headed "Off-peak kW" / "On-peak kW". Matching only the kWh
+        # spellings parsed every row to None and lost the data silently.
+        if series is Series.DEMAND:
+            off_keys, on_keys = _OFF_PEAK_KW_KEYS, _ON_PEAK_KW_KEYS
+        else:
+            off_keys, on_keys = _OFF_PEAK_KEYS, _ON_PEAK_KWH_KEYS
+
+        off_peak = _to_float(_pick(row, off_keys))
+        on_peak = _to_float(_pick(row, on_keys))
+        if off_peak is None and on_peak is None:
+            # A row with a valid timestamp but no value in either expected
+            # column means the headers moved; refuse rather than store blanks.
+            raise ParseError(
+                f"interval row {day} {clock} has no value in {off_keys[0]!r} or "
+                f"{on_keys[0]!r}; headers were {headers!r}"
+            )
+
         readings.append(
             IntervalReading(
                 series=series,
                 interval_start=datetime.combine(day, clock),
-                off_peak=_to_float(_pick(row, _OFF_PEAK_KEYS)),
-                on_peak=_to_float(_pick(row, _ON_PEAK_KWH_KEYS)),
+                off_peak=off_peak,
+                on_peak=on_peak,
             )
         )
 
