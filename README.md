@@ -85,6 +85,9 @@ srp-energy-monitor show       # print what's in the database
 srp-energy-monitor serve      # REST API + dashboard on http://127.0.0.1:8000
 srp-energy-monitor export --format json --series demand
 srp-energy-monitor import ./old-downloads   # backfill from CSVs you already have
+
+srp-energy-monitor fetch --no-demand        # CSVs only, skip the live scalars
+srp-energy-monitor fetch --show-browser     # run headed when selectors break
 ```
 
 A first fetch looks like this:
@@ -202,13 +205,21 @@ The `label` and `is_average` labels on `srp_current_demand_kw` carry SRP's own c
 Parsing and storage have no browser dependency, so you can use them on CSVs you already have:
 
 ```python
-from srp_energy import Series, Store, parse_file
+from srp_energy import Series, Store, parse_file, parse_hourly_file
 
 readings = parse_file("srp_demand_20260826_060041.csv", Series.DEMAND)
 worst = max(readings, key=lambda r: r.on_peak or 0)
 print(f"Worst day: {worst.usage_date} at {worst.on_peak} kW ({worst.high_temp_f}°F)")
 
-Store("./data/srp.db").upsert_readings(readings)
+store = Store("./data/srp.db")
+store.upsert_readings(readings)
+
+# Hourly exports parse the same way; demand is half-hourly and in kW.
+intervals = parse_hourly_file("srp_hourly_usage_20260825_20260826.csv")
+store.upsert_intervals(intervals)
+
+# And read it all back without a browser anywhere in sight.
+print(store.latest_demand(), store.latest_bill_projection())
 ```
 
 ---
@@ -231,7 +242,11 @@ The design point is that **only `client.py` touches a browser**. Parsing, storag
 | `srp_energy/service.py` | Wires fetch → parse → store |
 | `srp_energy/api.py` | FastAPI app, Prometheus rendering |
 | `srp_energy/cli.py` | Command line entry points |
+| `srp_energy/models.py` | Typed records: readings, intervals, demand, projection |
+| `srp_energy/config.py` | Environment/`.env` settings |
 | `srp_energy/web/dashboard.html` | Dependency-free dashboard (no CDN) |
+| `deploy/` | systemd user units for the daily fetch |
+| `CLAUDE.md` | Handoff notes: the traps, and why the code is shaped this way |
 
 ---
 
@@ -246,6 +261,13 @@ The design point is that **only `client.py` touches a browser**. Parsing, storag
 - **Scraping is inherently fragile.** SRP can change their markup at any time. When a fetch starts failing, run `srp-energy-monitor fetch --show-browser` to watch it happen, then update the selector cascades in `client.py`.
 - **Not real-time.** SRP publishes daily, one day behind. This is a billing-data tool, not a live power monitor.
 
+## Working on this
+
+If you are picking this project up — human or agent — read **[CLAUDE.md](CLAUDE.md)**
+first. It records the things that are not visible in the code: the Cloudflare
+gate in front of the portal, the duplicated login form, why the demand figure
+carries its caption, and the three bugs that a passing test suite did not catch.
+
 ## Development
 
 ```bash
@@ -253,7 +275,13 @@ pip install -e '.[dev]'
 pytest
 ```
 
-Tests run against CSV fixtures that mirror SRP's real export format — BOM, CRLF header, quoted numerics, `Combined total` summary row — with invented numbers. No credentials or network needed.
+Tests run against CSV fixtures that mirror SRP's real export format — BOM, CRLF header, quoted numerics, the ragged `12:0 AM` clock, `Combined total` summary row — with invented numbers. No credentials or network needed.
+
+That makes them fast and safe, and it also means **a green suite does not prove the scraper works**. Every markup-related bug this project has hit passed the tests. Verify a scraper change against the live site:
+
+```bash
+srp-energy-monitor fetch && srp-energy-monitor show --days 7
+```
 
 ## History
 

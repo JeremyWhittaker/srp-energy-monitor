@@ -48,7 +48,7 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
 
     app = FastAPI(
         title="SRP Energy Monitor",
-        version="1.0.0",
+        version="1.1.0",
         summary="Read your Salt River Project demand and energy data over HTTP.",
         description=(
             "Salt River Project publishes residential usage only through their web "

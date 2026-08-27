@@ -174,3 +174,34 @@ def test_bill_projection_404_before_any_fetch(tmp_path):
     c = TestClient(create_app(Settings(database_path=tmp_path / "nobill.db"), store))
 
     assert c.get("/api/v1/bill-projection").status_code == 404
+
+
+def test_package_root_exports_the_whole_browser_free_surface():
+    """A library user must be able to reach hourly data and the projection.
+
+    These were added after the first release and were missing from __all__,
+    so `from srp_energy import IntervalReading` failed while the feature
+    existed.
+    """
+    import srp_energy
+
+    for name in (
+        "BillProjection", "DailyReading", "DemandObservation", "IntervalReading",
+        "Series", "ParseError", "parse_csv", "parse_file", "parse_hourly_csv",
+        "parse_hourly_file", "Store",
+    ):
+        assert hasattr(srp_energy, name), f"{name} is not importable from the package root"
+        assert name in srp_energy.__all__, f"{name} is missing from __all__"
+
+
+def test_importing_the_package_does_not_require_playwright():
+    """Parsing and storage must stay usable without the scraper extra."""
+    import subprocess
+    import sys
+
+    code = (
+        "import sys; sys.modules['playwright'] = None; "
+        "import srp_energy; print(srp_energy.__version__)"
+    )
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr

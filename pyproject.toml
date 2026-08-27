@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "srp-energy-monitor"
-version = "1.0.0"
+version = "1.1.0"
 description = "Collect, store, chart and serve your Salt River Project (SRP) peak demand and energy data."
 readme = "README.md"
 license = { text = "MIT" }

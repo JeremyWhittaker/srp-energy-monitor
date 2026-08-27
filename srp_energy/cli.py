@@ -142,8 +142,8 @@ def _cmd_serve(args: argparse.Namespace, settings: Settings, store: Store) -> in
         import uvicorn
     except ImportError:
         print(
-            "uvicorn is not installed. Install the API extra:\n"
-            "    pip install 'srp-energy-monitor[api]'",
+            "uvicorn is not installed. Install the API extra from a checkout:\n"
+            "    pip install -e '.[api]'",
             file=sys.stderr,
         )
         return 1

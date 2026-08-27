@@ -125,6 +125,35 @@ Use absolute paths in both units — a relative `WorkingDirectory` or a
 `.venv` path that doesn't exist is the most common reason a unit silently
 fails to start.
 
+## The database
+
+SQLite at `$SRP_DATA_DIR/srp.db`, currently **schema v4**. `Store` creates and
+migrates it on construction — there is no separate migration command.
+
+| Table | Holds |
+|---|---|
+| `daily_reading` | One row per (series, usage date) from the four daily exports |
+| `interval_reading` | One row per (series, interval start); demand is half-hourly |
+| `demand_observation` | Append-only log of the scraped bill-cycle demand figure |
+| `bill_projection` | Append-only log of the scraped projected bill amount |
+| `meta` | `schema_version` |
+
+The two reading tables **upsert**, so re-running a fetch corrects history rather
+than duplicating it. SRP restates recent days as meter data settles, so that
+behaviour is load-bearing, not an optimisation.
+
+The two scraped scalars are deliberately append-only: both move through the
+billing cycle, and the series is the useful part.
+
+Raising `SCHEMA_VERSION` in `srp_energy/storage.py` requires extending
+`Store._migrate`. The v1→v2 step is worth reading as a model — it carried old
+rows forward with a `NULL` label rather than asserting a meaning they never
+had.
+
+To start over, delete the database; everything except the accumulated history
+of those two scalars can be re-fetched, and `srp-energy-monitor import` will
+rebuild the daily readings from CSVs in `data/downloads/`.
+
 ## Exposing the API
 
 There is **no authentication**. The default bind is `127.0.0.1` deliberately.

@@ -263,8 +263,8 @@ class SRPClient:
             from playwright.async_api import async_playwright
         except ImportError as exc:  # pragma: no cover - depends on install extras
             raise SRPError(
-                "Playwright is not installed. Install it with:\n"
-                "    pip install 'srp-energy-monitor[scrape]'\n"
+                "Playwright is not installed. Install it from a checkout with:\n"
+                "    pip install -e '.[scrape]'\n"
                 "    playwright install chromium"
             ) from exc
 
