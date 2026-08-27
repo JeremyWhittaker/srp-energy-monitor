@@ -21,11 +21,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import AsyncIterator, Sequence
 from urllib.parse import urlparse
 
 from .models import BillProjection, DemandObservation, Series
@@ -250,8 +249,15 @@ class SRPClient:
 
     # ---------------------------------------------------------------- lifecycle
 
-    async def __aenter__(self) -> "SRPClient":
-        await self.start()
+    async def __aenter__(self) -> SRPClient:
+        # `start()` can fail after the driver and Chromium are already up --
+        # a launch timeout, a context that will not open. Without this, those
+        # processes outlive the interpreter's interest in them.
+        try:
+            await self.start()
+        except BaseException:
+            await self.close()
+            raise
         return self
 
     async def __aexit__(self, *exc_info) -> None:
@@ -314,10 +320,7 @@ class SRPClient:
 
     @property
     def session_is_fresh(self) -> bool:
-        return (
-            self._logged_in_at is not None
-            and datetime.now() - self._logged_in_at < SESSION_TTL
-        )
+        return self._logged_in_at is not None and datetime.now() - self._logged_in_at < SESSION_TTL
 
     async def _fill_first(self, selectors: Sequence[str], value: str, what: str) -> str:
         """Fill the first field that exists, returning the selector that matched.
@@ -336,9 +339,7 @@ class SRPClient:
             await element.fill(value)
             logger.debug("filled %s using %s", what, selector)
             return selector
-        raise LoginError(
-            f"could not find a visible {what} field (tried: {', '.join(selectors)})"
-        )
+        raise LoginError(f"could not find a visible {what} field (tried: {', '.join(selectors)})")
 
     async def login(self, *, force: bool = False) -> None:
         """Establish a session, reusing a recent one unless ``force``."""
@@ -355,9 +356,7 @@ class SRPClient:
             return
 
         await self._fill_first(USERNAME_SELECTORS, self.username, "username")
-        password_selector = await self._fill_first(
-            PASSWORD_SELECTORS, self.password, "password"
-        )
+        password_selector = await self._fill_first(PASSWORD_SELECTORS, self.password, "password")
 
         # Enter submits the real form; the button cascade below is a fallback
         # for layouts where the field isn't inside a submitting form.
@@ -595,15 +594,15 @@ class SRPClient:
             # programmatic value set and keeps its previous date.
             await box.type(value.strftime("%m/%d/%Y"), delay=60)
 
-        await self.page.get_by_role("button", name="Submit").filter(
-            visible=True
-        ).first.click()
+        await self.page.get_by_role("button", name="Submit").filter(visible=True).first.click()
         await asyncio.sleep(6)  # the chart must reload before the export matches
 
         async with self.page.expect_download(timeout=self.download_timeout_ms) as info:
-            await self.page.get_by_role("button", name="Export to Excel").filter(
-                visible=True
-            ).first.click()
+            await (
+                self.page.get_by_role("button", name="Export to Excel")
+                .filter(visible=True)
+                .first.click()
+            )
             download = await info.value
 
         path = dest / f"srp_hourly_{series.value}_{start:%Y%m%d}_{end:%Y%m%d}.csv"
@@ -634,8 +633,10 @@ class SRPClient:
 async def open_client(username: str, password: str, **kwargs) -> AsyncIterator[SRPClient]:
     """Convenience wrapper for ``async with``."""
     client = SRPClient(username, password, **kwargs)
-    await client.start()
     try:
+        await client.start()
         yield client
     finally:
+        # Inside the try, so a failure part-way through start() still tears
+        # down whatever did come up. close() tolerates partial startup.
         await client.close()

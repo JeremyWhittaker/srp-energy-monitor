@@ -113,9 +113,9 @@ def test_rejects_empty_file():
 @pytest.mark.parametrize(
     "cell,expected",
     [
-        ('"1,234"', 1234.0),      # thousands separator
-        ('"2.4 kW"', 2.4),        # trailing unit
-        ('"(1.5)"', -1.5),        # parenthesised negative
+        ('"1,234"', 1234.0),  # thousands separator
+        ('"2.4 kW"', 2.4),  # trailing unit
+        ('"(1.5)"', -1.5),  # parenthesised negative
         ('"-19"', -19.0),
         ('""', None),
         ('"N/A"', None),
@@ -127,9 +127,11 @@ def test_numeric_cell_variants(cell, expected):
     assert parse_csv(text, Series.USAGE)[0].off_peak == expected
 
 
-@pytest.mark.parametrize("fmt,raw", [("m/d/Y", "7/1/2025"), ("ISO", "2025-07-01"), ("m/d/y", "7/1/25")])
+@pytest.mark.parametrize(
+    "fmt,raw", [("m/d/Y", "7/1/2025"), ("ISO", "2025-07-01"), ("m/d/y", "7/1/25")]
+)
 def test_date_format_variants(fmt, raw):
-    text = f"Usage date,Off-peak kWh\n{raw},\"5\"\n"
+    text = f'Usage date,Off-peak kWh\n{raw},"5"\n'
     assert parse_csv(text, Series.USAGE)[0].usage_date == date(2025, 7, 1)
 
 
@@ -162,3 +164,35 @@ def test_parse_file_infers_series_from_filename():
     """`parse_file` with no series should use the filename convention."""
     readings = parse_file(FIXTURES / "srp_generation_20250731_120835.csv")
     assert readings[0].series is Series.GENERATION
+
+
+def test_all_blank_values_is_an_error_not_a_file_of_nulls():
+    """A renamed value column must fail loudly, not parse to blanks.
+
+    This is the daily twin of the hourly guard. Silently returning a month of
+    None-valued readings is the input that used to erase stored history.
+    """
+    text = (
+        "Meter read date,Usage date,Off-peak therms,On-peak therms,"
+        "High temperature (F),Low temperature (F)\r\n"
+        '7/1/2025,6/30/2025,"89","22",114,86\r\n'
+        '7/2/2025,7/1/2025,"91","24",115,88\r\n'
+    )
+
+    with pytest.raises(ParseError, match="no usage value column found"):
+        parse_csv(text, Series.USAGE)
+
+
+def test_a_single_blank_day_is_tolerated():
+    """SRP can publish a day before its numbers land; that is not a header change."""
+    text = (
+        "Meter read date,Usage date,Off-peak kWh,On-peak kWh,"
+        "High temperature (F),Low temperature (F)\r\n"
+        '7/1/2025,6/30/2025,"89","22",114,86\r\n'
+        "7/2/2025,7/1/2025,,,115,88\r\n"
+    )
+
+    readings = parse_csv(text, Series.USAGE)
+
+    assert len(readings) == 2
+    assert readings[1].off_peak is None

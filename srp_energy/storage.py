@@ -21,10 +21,10 @@ services.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from datetime import date, datetime, time
 from pathlib import Path
-from typing import Iterable, Iterator, Sequence
 
 from .models import BillProjection, DailyReading, DemandObservation, IntervalReading, Series
 
@@ -121,9 +121,7 @@ class Store:
         the price plan -- so rows are copied across with a NULL label rather
         than being relabelled with a guess.
         """
-        existing = {r[0] for r in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        )}
+        existing = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         if "peak_demand_observation" in existing:
             conn.execute(
                 "INSERT OR IGNORE INTO demand_observation (observed_at, demand_kw, label, source)"
@@ -157,12 +155,17 @@ class Store:
                     (series, usage_date, meter_read_date, off_peak, on_peak,
                      high_temp_f, low_temp_f, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                -- COALESCE, not a plain assignment: SRP restates recent days
+                -- as meter data settles, so a new value must win -- but a NULL
+                -- must not. A parse that yields blanks (SRP renaming a column
+                -- is the realistic cause) would otherwise erase a month of
+                -- good history on the next scheduled fetch.
                 ON CONFLICT(series, usage_date) DO UPDATE SET
-                    meter_read_date = excluded.meter_read_date,
-                    off_peak        = excluded.off_peak,
-                    on_peak         = excluded.on_peak,
-                    high_temp_f     = excluded.high_temp_f,
-                    low_temp_f      = excluded.low_temp_f,
+                    meter_read_date = COALESCE(excluded.meter_read_date, meter_read_date),
+                    off_peak        = COALESCE(excluded.off_peak, off_peak),
+                    on_peak         = COALESCE(excluded.on_peak, on_peak),
+                    high_temp_f     = COALESCE(excluded.high_temp_f, high_temp_f),
+                    low_temp_f      = COALESCE(excluded.low_temp_f, low_temp_f),
                     updated_at      = excluded.updated_at
                 """,
                 rows,
@@ -189,9 +192,11 @@ class Store:
                 INSERT INTO interval_reading
                     (series, interval_start, off_peak, on_peak, updated_at)
                 VALUES (?, ?, ?, ?, ?)
+                -- Same reasoning as upsert_readings: a restated value wins, a
+                -- NULL never overwrites a stored one.
                 ON CONFLICT(series, interval_start) DO UPDATE SET
-                    off_peak   = excluded.off_peak,
-                    on_peak    = excluded.on_peak,
+                    off_peak   = COALESCE(excluded.off_peak, off_peak),
+                    on_peak    = COALESCE(excluded.on_peak, on_peak),
                     updated_at = excluded.updated_at
                 """,
                 rows,
@@ -260,6 +265,11 @@ class Store:
         ascending order. Anything else would be a trap: asking for 30 days of
         data and silently getting the oldest 30 rows in the database is never
         what a caller means.
+
+        Note it counts **rows, not days**. All four series share this table, so
+        an unfiltered ``limit=30`` spans about eight days and the oldest day
+        comes back partial. Pass ``series``, or filter with ``start``/``end``,
+        when you want whole days.
         """
         clauses: list[str] = []
         params: list[object] = []
@@ -303,7 +313,11 @@ class Store:
         """Query hourly intervals, oldest first.
 
         ``start``/``end`` are inclusive dates; ``end`` covers the whole day, so
-        asking for a single date returns its 24 intervals.
+        asking for a single date returns its 24 intervals (48 for demand, which
+        SRP reports half-hourly).
+
+        As with :meth:`readings`, ``limit`` counts rows rather than days or
+        series; pass ``series`` alongside it if you want a whole series back.
         """
         clauses: list[str] = []
         params: list[object] = []
@@ -321,9 +335,13 @@ class Store:
         if limit is None:
             sql = f"SELECT * FROM interval_reading{where} ORDER BY interval_start ASC, series ASC"
         else:
+            # `series DESC` is a tiebreak, not decoration: several series can
+            # share an interval_start, and without it which rows survive the
+            # LIMIT is left to SQLite.
             sql = (
                 f"SELECT * FROM (SELECT * FROM interval_reading{where}"
-                " ORDER BY interval_start DESC LIMIT ?) ORDER BY interval_start ASC, series ASC"
+                " ORDER BY interval_start DESC, series DESC LIMIT ?)"
+                " ORDER BY interval_start ASC, series ASC"
             )
             params.append(limit)
 
@@ -377,9 +395,7 @@ class Store:
                 ORDER BY series
                 """
             ).fetchall()
-            demand_count = conn.execute(
-                "SELECT COUNT(*) FROM demand_observation"
-            ).fetchone()[0]
+            demand_count = conn.execute("SELECT COUNT(*) FROM demand_observation").fetchone()[0]
             interval_row = conn.execute(
                 "SELECT COUNT(*) AS n, MIN(interval_start) AS first, MAX(interval_start) AS last"
                 " FROM interval_reading"

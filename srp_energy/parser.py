@@ -18,9 +18,9 @@ from __future__ import annotations
 
 import csv
 import io
+from collections.abc import Iterable, Iterator, Sequence
 from datetime import date, datetime
 from pathlib import Path
-from typing import Iterable, Iterator, Sequence
 
 from .models import DailyReading, IntervalReading, Series
 
@@ -129,6 +129,7 @@ def parse_csv(text: str, series: Series | None = None) -> list[DailyReading]:
     if not headers:
         raise ParseError("CSV is empty")
 
+    normalised_headers = {h.strip().lower().lstrip("\ufeff") for h in headers if h}
     inferred = infer_series(headers)
     if series is None:
         if inferred is None:
@@ -183,6 +184,22 @@ def parse_csv(text: str, series: Series | None = None) -> list[DailyReading]:
 
     if not saw_date_column:
         raise ParseError(f"no usable date column found; headers were {headers!r}")
+
+    # The dates parsed but no value column is present at all: SRP renamed one.
+    # Refuse rather than hand back a file of blanks, which `upsert_readings`
+    # would then write over a month of good history. This is the daily twin of
+    # the per-row guard in `parse_hourly_csv`. It keys on the *headers* rather
+    # than on empty cells, because SRP legitimately publishes a day before its
+    # numbers land, and that must stay a blank row rather than an error.
+    if readings:
+        value_keys = (
+            _ON_PEAK_KW_KEYS if series is Series.DEMAND else _OFF_PEAK_KEYS + _ON_PEAK_KWH_KEYS
+        )
+        if not any(key in normalised_headers for key in value_keys):
+            raise ParseError(
+                f"no {series.value} value column found (expected one of "
+                f"{value_keys!r}); headers were {headers!r}"
+            )
 
     readings.sort(key=lambda r: r.usage_date)
     return readings
@@ -241,7 +258,6 @@ def _to_time(raw: str | None):
     Accepts the zero-padded and unpadded variants SRP mixes ("12:0 AM",
     "12:00 AM", "13:00").
     """
-    from datetime import time as _time
 
     if not raw:
         return None
@@ -320,9 +336,7 @@ def parse_hourly_csv(text: str, series: Series) -> list[IntervalReading]:
         )
 
     if not saw_interval:
-        raise ParseError(
-            f"no usable date+interval columns found; headers were {headers!r}"
-        )
+        raise ParseError(f"no usable date+interval columns found; headers were {headers!r}")
 
     readings.sort(key=lambda r: r.interval_start)
     return readings
@@ -334,9 +348,7 @@ def parse_hourly_file(path: str | Path, series: Series | None = None) -> list[In
     if series is None:
         series = series_from_hourly_filename(path.name)
     if series is None:
-        raise ParseError(
-            f"cannot tell which chart {path.name} came from; pass series= explicitly"
-        )
+        raise ParseError(f"cannot tell which chart {path.name} came from; pass series= explicitly")
     return parse_hourly_csv(path.read_text(encoding="utf-8-sig"), series)
 
 
@@ -345,7 +357,7 @@ def series_from_hourly_filename(name: str) -> Series | None:
     stem = Path(name).stem.lower()
     if not stem.startswith("srp_hourly_"):
         return None
-    rest = stem[len("srp_hourly_"):]
+    rest = stem[len("srp_hourly_") :]
     for candidate in Series:
         if rest.startswith(f"{candidate.value}_"):
             return candidate

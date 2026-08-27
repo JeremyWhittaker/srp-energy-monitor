@@ -1,0 +1,10 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Question or idea
+    url: https://github.com/JeremyWhittaker/srp-energy-monitor/discussions
+    about: For usage questions and anything open-ended, start a discussion.
+  - name: Salt River Project support
+    url: https://www.srpnet.com/
+    about: >
+      This project is not affiliated with SRP. For billing, account or price-plan
+      questions, contact SRP directly.

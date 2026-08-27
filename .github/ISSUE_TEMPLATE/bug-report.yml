@@ -1,0 +1,45 @@
+name: Bug report
+description: Something other than the scraper is behaving incorrectly.
+title: "[bug] "
+labels: ["bug", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For a fetch that stopped working, please use the **Scraper stopped
+        working** template instead — it asks the questions that actually
+        diagnose it.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What did you expect, and what did you get instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. srp-energy-monitor import ./downloads
+        2. curl localhost:8000/api/v1/readings?series=net
+        3. off_peak is null on every row
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: Command output, traceback, or API response. Automatically formatted as code.
+      render: shell
+
+  - type: input
+    id: version
+    attributes:
+      label: Version and Python
+      placeholder: "1.1.0 on Python 3.12, Ubuntu 24.04"
+    validations:
+      required: true

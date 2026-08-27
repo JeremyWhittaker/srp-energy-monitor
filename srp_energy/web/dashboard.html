@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>SRP Energy Monitor</title>
 <style>
   :root {
@@ -43,6 +44,8 @@
   header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; margin-bottom: 24px; }
   h1 { font-size: 22px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
   .sub { color: var(--muted); font-size: 13px; }
+  .sub.stale { color: var(--accent); }
+  :focus-visible { outline: 2px solid var(--off-peak); outline-offset: 2px; }
   header .spacer { flex: 1; }
   button {
     font: inherit; font-size: 13px; padding: 7px 14px; border-radius: 7px;
@@ -52,6 +55,7 @@
   button:hover:not(:disabled) { border-color: var(--muted); }
   button:disabled { opacity: .5; cursor: default; }
   .cards { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); margin-bottom: 26px; }
+  .card .meta:empty { display: none; }
   .card {
     background: var(--panel); border: 1px solid var(--border); border-radius: 11px;
     padding: 16px 18px; box-shadow: var(--shadow);
@@ -82,6 +86,7 @@
 <div class="wrap">
   <header>
     <h1>SRP Energy Monitor</h1>
+    <span class="sub" id="coverage"></span>
     <div class="spacer"></div>
     <span class="sub" id="updated"></span>
     <button id="refresh">Refresh</button>
@@ -137,37 +142,95 @@ function renderTabs() {
   }
 }
 
+// SRP's captions land in the DOM, so escape them. They are scraped from a
+// page we do not control, which is exactly the situation innerHTML punishes.
+const esc = (s) =>
+  String(s).replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+function card({ label, value, unit, meta, primary }) {
+  return `<div class="card${primary ? ' primary' : ''}">
+    <div class="label">${esc(label)}</div>
+    <div class="value">${esc(value)}${unit ? `<span class="unit">${esc(unit)}</span>` : ''}</div>
+    <div class="meta">${meta ? esc(meta) : ''}</div>
+  </div>`;
+}
+
 async function loadCards() {
   const summary = await getJSON('/api/v1/summary');
   const cards = [];
   const demand = summary.latest_demand;
+  const bill = summary.latest_bill_projection;
 
   // The caption comes from SRP because its meaning is plan-dependent: an
   // average on some price plans, a maximum on others.
-  const demandLabel = (demand && demand.label) || 'Current demand';
-  cards.push(`<div class="card primary">
-    <div class="label">${demandLabel}</div>
-    <div class="value">${fmt(demand && demand.demand_kw)}<span class="unit">kW</span></div>
-    <div class="meta">${demand ? new Date(demand.observed_at).toLocaleString() : 'not yet collected'}</div>
-  </div>`);
+  cards.push(card({
+    primary: true,
+    label: (demand && demand.label) || 'Current demand',
+    value: fmt(demand && demand.demand_kw),
+    unit: 'kW',
+    meta: demand ? new Date(demand.observed_at).toLocaleString() : 'not yet collected',
+  }));
 
-  for (const s of SERIES) {
-    const info = summary.series[s.key];
-    if (!info) continue;
-    cards.push(`<div class="card">
-      <div class="label">${s.label}</div>
-      <div class="value">${info.days}<span class="unit">days</span></div>
-      <div class="meta">through ${info.last_date}</div>
-    </div>`);
+  if (bill) {
+    cards.push(card({
+      label: 'Projected bill',
+      value: '$' + Number(bill.amount_usd).toFixed(2),
+      meta: bill.basis || new Date(bill.observed_at).toLocaleString(),
+    }));
+  }
+
+  // The latest day SRP has published per series -- the numbers people
+  // actually want, not how many rows happen to be in the database.
+  //
+  // Query from the *earliest* of the per-series last dates, not the newest:
+  // SRP can publish one series a day behind another, and asking only for the
+  // newest date drops the laggard's card off the page entirely.
+  const lastDates = Object.values(summary.series).map((i) => i.last_date).filter(Boolean);
+  if (lastDates.length) {
+    const from = [...lastDates].sort()[0];
+    const newest = [...lastDates].sort().pop();
+    const { readings } = await getJSON(`/api/v1/readings?start=${from}`);
+
+    const latest = {};
+    for (const r of readings) {
+      if (!latest[r.series] || r.usage_date > latest[r.series].usage_date) latest[r.series] = r;
+    }
+    for (const s of SERIES) {
+      const r = latest[s.key];
+      if (!r || s.key === 'demand') continue;
+      const stale = r.usage_date !== newest ? `  ·  ${r.usage_date}` : '';
+      cards.push(card({
+        label: s.label,
+        value: fmt(r.total, 1),
+        unit: r.unit,
+        meta: `${fmt(r.off_peak, 1)} off-peak / ${fmt(r.on_peak, 1)} on-peak${stale}`,
+      }));
+    }
   }
 
   $('cards').innerHTML = cards.join('');
+
+  // Deliberately no day count here: the chart legend reports how many days it
+  // is *plotting*, and a second, differently-derived count beside it reads as
+  // a contradiction rather than as extra information.
+  const infos = Object.values(summary.series);
+  const parts = [];
+  if (infos.length) {
+    const first = infos.map((i) => i.first_date).filter(Boolean).sort()[0];
+    const last = infos.map((i) => i.last_date).filter(Boolean).sort().pop();
+    if (first && last) parts.push(`${first} → ${last}`);
+  }
+  const iv = summary.intervals;
+  if (iv && iv.count) parts.push(`${iv.count} hourly intervals`);
+  $('coverage').textContent = parts.join('  ·  ');
   $('updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+  $('updated').classList.remove('stale');
 }
 
 function renderEmpty(message) {
   $('chart').innerHTML = '';
-  $('legend').innerHTML = `<div class="msg" style="flex:1">${message}</div>`;
+  $('legend').innerHTML = `<div class="msg" style="flex:1">${esc(message)}</div>`;
 }
 
 // Hand-rolled SVG bar chart. Deliberately dependency-free so the dashboard
@@ -223,7 +286,10 @@ function drawChart(data) {
     let posBase = 0, negBase = 0;
     for (const s of stacks) {
       const v = s.values[i];
-      if (v === null || v === undefined || v === 0) continue;
+      // Only skip *missing* values. A genuine 0.0 -- an off-peak day with no
+      // on-peak demand, say -- must draw a baseline bar, or the chart makes
+      // "SRP reported zero" look identical to "SRP reported nothing".
+      if (v === null || v === undefined) continue;
       let top, height;
       if (v > 0) { top = y(posBase + v); height = y(posBase) - top; posBase += v; }
       else { top = y(negBase); height = y(negBase + v) - top; negBase += v; }
@@ -233,15 +299,23 @@ function drawChart(data) {
       );
     }
 
-    // Label roughly every 5th day so the axis stays readable.
+    // Label roughly every 5th day so the axis stays readable, plus the last
+    // day -- but only when it is far enough from the previous tick that the
+    // two do not overprint each other.
     const every = Math.ceil(n / 12);
-    if (i % every === 0 || i === n - 1) {
+    const onTick = i % every === 0;
+    const lastAndClear = i === n - 1 && (n - 1) % every >= every / 2;
+    if (onTick || lastAndClear) {
       const d = data.labels[i].slice(5).replace('-', '/');
       parts.push(`<text x="${cx.toFixed(1)}" y="${H - padB + 18}" text-anchor="middle" font-size="11" fill="var(--muted)">${d}</text>`);
     }
   }
 
   svg.innerHTML = parts.join('');
+  svg.setAttribute(
+    'aria-label',
+    `${data.label}, ${n} days from ${data.labels[0]} to ${data.labels[n - 1]}, in ${data.unit}`
+  );
   $('legend').innerHTML = stacks
     .map((s) => `<span><i class="swatch" style="background:${s.color}"></i>${s.name}</span>`)
     .join('') + `<span style="margin-left:auto">${n} days</span>`;
@@ -260,6 +334,10 @@ async function refresh() {
     await loadCards();
     await loadChart();
   } catch (err) {
+    // The cards still hold the last good values. Say so, rather than leaving
+    // an "Updated <now>" label asserting freshness for data that did not load.
+    $('updated').textContent = 'Refresh failed — showing last known values';
+    $('updated').classList.add('stale');
     renderEmpty(`Could not reach the API: ${err.message}`);
   }
 }

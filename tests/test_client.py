@@ -11,9 +11,9 @@ import pytest
 
 from srp_energy.client import (
     PASSWORD_SELECTORS,
-    SRPClient,
-    USERNAME_SELECTORS,
     USER_AGENT,
+    USERNAME_SELECTORS,
+    SRPClient,
     SRPError,
 )
 from srp_energy.models import Series

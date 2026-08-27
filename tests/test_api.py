@@ -11,7 +11,12 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from srp_energy.api import create_app  # noqa: E402
 from srp_energy.config import Settings  # noqa: E402
-from srp_energy.models import DailyReading, DemandObservation, Series  # noqa: E402
+from srp_energy.models import (  # noqa: E402
+    DailyReading,
+    DemandObservation,
+    IntervalReading,
+    Series,
+)
 from srp_energy.storage import Store  # noqa: E402
 
 
@@ -35,7 +40,27 @@ def client(tmp_path):
         ]
     )
     store.record_demand(
-        DemandObservation(observed_at=datetime(2025, 7, 3, 6, 0), demand_kw=4.5, source=".srp-red-text strong")
+        DemandObservation(
+            observed_at=datetime(2025, 7, 3, 6, 0), demand_kw=4.5, source=".srp-red-text strong"
+        )
+    )
+    store.upsert_intervals(
+        [
+            IntervalReading(
+                series=Series.USAGE,
+                interval_start=datetime(2025, 7, 3, hour),
+                off_peak=1.5,
+            )
+            for hour in (0, 1)
+        ]
+        + [
+            IntervalReading(
+                series=Series.DEMAND,
+                interval_start=datetime(2025, 7, 3, 0, 30),
+                off_peak=5.0,
+                on_peak=0.0,
+            )
+        ]
     )
     settings = Settings(database_path=tmp_path / "api.db", data_dir=tmp_path)
     return TestClient(create_app(settings, store))
@@ -78,13 +103,57 @@ def test_series_endpoint_is_chart_shaped(client):
     assert body["total"] == [102.0, 104.0, 106.0]
 
 
+def test_intervals_envelope_unit_follows_the_series(client):
+    """Demand intervals are kW, not kWh.
+
+    A fixed envelope unit is how a caller mislabels a demand reading as energy,
+    which is the same class of mistake as reading an average as a peak.
+    """
+    demand = client.get("/api/v1/intervals?series=demand").json()
+    assert demand["unit"] == "kW"
+    assert all(row["unit"] == "kW" for row in demand["intervals"])
+
+    usage = client.get("/api/v1/intervals?series=usage").json()
+    assert usage["unit"] == "kWh"
+
+    # Mixed series have no single unit, so the envelope must not claim one.
+    mixed = client.get("/api/v1/intervals").json()
+    assert mixed["count"] == 3
+    assert mixed["unit"] is None
+
+
 def test_metrics_exposes_prometheus_format(client):
     text = client.get("/metrics").text
 
     assert "# TYPE srp_current_demand_kw gauge" in text
     assert "srp_current_demand_kw{" in text
     assert 'srp_daily_energy_kwh{series="usage",period="on_peak"' in text
-    assert 'srp_readings_total{series="usage"} 3.0' in text
+    assert 'srp_stored_readings{series="usage"} 3.0' in text
+
+
+def test_metrics_keep_the_date_out_of_the_label_set(client):
+    """A date label mints a fresh time series every day.
+
+    Prometheus identifies a series by its labels, so `date="..."` makes each
+    day a distinct, 24-hour-lived series that no range query can span --
+    defeating the Grafana use case /metrics exists for. The reported day is
+    published as its own timestamp gauge instead.
+    """
+    text = client.get("/metrics").text
+
+    assert 'date="' not in text
+    assert 'srp_daily_reading_timestamp_seconds{series="usage"}' in text
+    # `_total` is reserved for counters; this is a gauge.
+    assert "srp_readings_total" not in text
+
+
+def test_metrics_escape_rather_than_delete_caption_characters(tmp_path):
+    """SRP writes these captions, so they are arbitrary text."""
+    from srp_energy.api import _escape_label
+
+    assert _escape_label('a "quoted" caption') == 'a \\"quoted\\" caption'
+    assert _escape_label("back\\slash") == "back\\\\slash"
+    assert _escape_label("two\nlines") == "two\\nlines"
 
 
 def test_metrics_carry_the_srp_caption_so_average_is_not_read_as_peak(tmp_path):
@@ -186,9 +255,17 @@ def test_package_root_exports_the_whole_browser_free_surface():
     import srp_energy
 
     for name in (
-        "BillProjection", "DailyReading", "DemandObservation", "IntervalReading",
-        "Series", "ParseError", "parse_csv", "parse_file", "parse_hourly_csv",
-        "parse_hourly_file", "Store",
+        "BillProjection",
+        "DailyReading",
+        "DemandObservation",
+        "IntervalReading",
+        "Series",
+        "ParseError",
+        "parse_csv",
+        "parse_file",
+        "parse_hourly_csv",
+        "parse_hourly_file",
+        "Store",
     ):
         assert hasattr(srp_energy, name), f"{name} is not importable from the package root"
         assert name in srp_energy.__all__, f"{name} is missing from __all__"

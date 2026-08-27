@@ -1,4 +1,6 @@
-# Pinned floor versions for a plain `pip install -r requirements.txt` install.
+# Pinned floor versions of this project's dependencies only -- installing this
+# file does NOT install the srp_energy package or the srp-energy-monitor
+# console script that every example in the docs invokes.
 # Prefer `pip install -e '.[all]'`, which reads pyproject.toml instead.
 playwright>=1.40
 python-dotenv>=1.0

@@ -49,18 +49,23 @@ health check.
 
 ```
 LoginError: SRP login failed. Check SRP_USERNAME/SRP_PASSWORD, and note that
-an account with MFA enabled cannot be automated. Landed on: https://...
+an account with MFA enabled cannot be automated -- this scraper has no MFA
+support. Landed on: https://...
 ```
 
 In rough order of likelihood:
 
-1. **Credentials are wrong or not loaded.** Confirm what the process actually
-   sees:
+1. **Credentials are wrong or not loaded.** `srp-energy-monitor show` prints
+   nothing about credentials (and exits 1 on an empty database), so confirm
+   what the process actually sees by asking the API instead:
    ```bash
-   srp-energy-monitor show    # then check /health for credentials_configured
+   srp-energy-monitor serve &
+   curl -s http://127.0.0.1:8000/health | grep credentials_configured
    ```
    A `.env` in a different directory than the one you run from will not be
-   picked up — pass `--env-file /path/to/.env` explicitly.
+   picked up — pass `--env-file /path/to/.env` explicitly. If the password
+   contains a `#` or spaces, quote it (`SRP_PASSWORD="pa#ss word"`) --
+   otherwise it can be truncated or split before it ever reaches SRP.
 2. **MFA is enabled on the account.** This is unsupported and unfixable from
    here. Disable MFA, or don't use this tool.
 3. **SRP renamed the login fields.** Run headed, inspect the username input,
@@ -162,11 +167,15 @@ stored unlabelled and a warning is logged rather than guessing. Fix by updating
 the `captionFor` regex in `_DEMAND_JS` in `srp_energy/client.py` — it currently
 looks for text matching `Current ... Demand` within six ancestors of the value.
 
-### Demand rows have `off_peak: null`
+### Daily demand rows have `off_peak: null`
 
-Correct and expected. The demand export has one value column (`On-peak kW`),
-which is stored in `on_peak`. `total` is `null` for demand because a peak is a
-maximum, not a sum.
+Correct and expected for the **daily** demand export -- it has one value
+column (`On-peak kW`), which is stored in `on_peak`. `total` is `null` for
+demand because a peak is a maximum, not a sum.
+
+The **hourly/interval** demand export is different: it has both `Off-peak kW`
+and `On-peak kW` columns, so `interval_reading` rows for demand can carry
+both `off_peak` and `on_peak`.
 
 ### Net energy values are negative
 

@@ -11,7 +11,7 @@ import os
 
 import pytest
 
-from srp_energy.config import Settings, _load_dotenv, _env_bool, _env_int
+from srp_energy.config import Settings, _env_bool, _env_int, _load_dotenv
 
 
 @pytest.fixture(autouse=True)
@@ -69,6 +69,30 @@ def test_fallback_parser_keeps_hash_inside_quoted_values(tmp_path, no_dotenv_pac
     assert os.environ["SRP_PASSWORD"] == "pa#ssw0rd"
 
 
+def test_fallback_parser_keeps_hash_inside_unquoted_values(tmp_path, no_dotenv_package):
+    """python-dotenv only treats ' #' as a comment, so the fallback must too.
+
+    Stripping from the first '#' silently truncated an unquoted password
+    containing one -- and a truncated password fails login in a way that looks
+    exactly like a broken scraper.
+    """
+    env = tmp_path / ".env"
+    env.write_text("SRP_PASSWORD=pa#ssw0rd\n")
+
+    _load_dotenv(env)
+
+    assert os.environ["SRP_PASSWORD"] == "pa#ssw0rd"
+
+
+def test_fallback_parser_still_strips_a_real_trailing_comment(tmp_path, no_dotenv_package):
+    env = tmp_path / ".env"
+    env.write_text("SRP_PORT=8080  # the port\n")
+
+    _load_dotenv(env)
+
+    assert os.environ["SRP_PORT"] == "8080"
+
+
 def test_fallback_parser_ignores_comments_and_blanks(tmp_path, no_dotenv_package):
     env = tmp_path / ".env"
     env.write_text("# a comment\n\n   \nSRP_HOST=0.0.0.0\nnot_a_pair\n")
@@ -94,8 +118,17 @@ def test_missing_dotenv_file_is_not_an_error(tmp_path):
 
 @pytest.mark.parametrize(
     "value,expected",
-    [("1", True), ("true", True), ("TRUE", True), ("yes", True), ("on", True),
-     ("0", False), ("false", False), ("no", False), ("", True)],
+    [
+        ("1", True),
+        ("true", True),
+        ("TRUE", True),
+        ("yes", True),
+        ("on", True),
+        ("0", False),
+        ("false", False),
+        ("no", False),
+        ("", True),
+    ],
 )
 def test_env_bool(monkeypatch, value, expected):
     monkeypatch.setenv("SRP_HEADLESS", value)

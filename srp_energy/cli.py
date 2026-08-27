@@ -1,10 +1,10 @@
 """Command line interface.
 
-    srp-energy-monitor fetch         # scrape SRP and store the results
-    srp-energy-monitor serve         # run the REST API + dashboard
-    srp-energy-monitor show          # print what's in the database
-    srp-energy-monitor export        # dump readings as CSV or JSON
-    srp-energy-monitor import        # backfill from previously downloaded CSVs
+srp-energy-monitor fetch         # scrape SRP and store the results
+srp-energy-monitor serve         # run the REST API + dashboard
+srp-energy-monitor show          # print what's in the database
+srp-energy-monitor export        # dump readings as CSV or JSON
+srp-energy-monitor import        # backfill from previously downloaded CSVs
 """
 
 from __future__ import annotations
@@ -21,6 +21,33 @@ from pathlib import Path
 from .config import Settings
 from .models import Series
 from .storage import Store
+
+# uvicorn resolves its log level through a plain dict lookup, so anything
+# outside this set is a KeyError rather than a message.
+_UVICORN_LOG_LEVELS = frozenset({"critical", "error", "warning", "info", "debug", "trace"})
+
+# Roughly 270 years. Beyond this `date.today() - timedelta(days=...)` raises
+# OverflowError, and no SRP account has data that far back regardless.
+_MAX_DAYS = 100_000
+
+
+def _iso_date(value: str) -> date:
+    """argparse type: a YYYY-MM-DD date, reported as a usage error not a traceback."""
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{value!r} is not a date in YYYY-MM-DD form") from None
+
+
+def _positive_days(value: str) -> int:
+    """argparse type: a day count that cannot overflow `date.today() - timedelta`."""
+    try:
+        days = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{value!r} is not a whole number of days") from None
+    if not 1 <= days <= _MAX_DAYS:
+        raise argparse.ArgumentTypeError(f"days must be between 1 and {_MAX_DAYS}, got {days}")
+    return days
 
 
 def _configure_logging(level: str) -> None:
@@ -66,29 +93,36 @@ def build_parser() -> argparse.ArgumentParser:
 
     show = sub.add_parser("show", help="Print stored data.")
     show.add_argument("--series", choices=[s.value for s in Series])
-    show.add_argument("--days", type=int, default=30, help="How far back to show (default: 30).")
+    show.add_argument(
+        "--days", type=_positive_days, default=30, help="How far back to show (default: 30)."
+    )
 
     export = sub.add_parser("export", help="Write stored readings to stdout or a file.")
     export.add_argument("--format", choices=["csv", "json"], default="csv")
     export.add_argument("--series", choices=[s.value for s in Series])
-    export.add_argument("--days", type=int, help="Limit to the last N days.")
+    export.add_argument("--days", type=_positive_days, help="Limit to the last N days.")
     export.add_argument("-o", "--output", help="Write here instead of stdout.")
 
     hourly = sub.add_parser("hourly", help="Pull hourly interval data for a date range.")
     hourly.add_argument(
-        "--start", help="First date, YYYY-MM-DD. Default: --days back from --end."
+        "--start", type=_iso_date, help="First date, YYYY-MM-DD. Default: --days back from --end."
     )
-    hourly.add_argument("--end", help="Last date, YYYY-MM-DD. Default: yesterday.")
+    hourly.add_argument("--end", type=_iso_date, help="Last date, YYYY-MM-DD. Default: yesterday.")
     hourly.add_argument(
-        "--days", type=int, default=3,
+        "--days",
+        type=_positive_days,
+        default=3,
         help="How many days back from --end when --start is omitted (default: 3).",
     )
     hourly.add_argument(
-        "--series", action="append", choices=[s.value for s in Series],
+        "--series",
+        action="append",
+        choices=[s.value for s in Series],
         help="Which chart to export; repeatable. Default: usage.",
     )
     hourly.add_argument(
-        "--show", action="store_true",
+        "--show",
+        action="store_true",
         help="Print the stored intervals afterwards instead of just a count.",
     )
 
@@ -115,9 +149,7 @@ def _cmd_fetch(args: argparse.Namespace, settings: Settings, store: Store) -> in
     series = [Series.parse(s) for s in args.series] if args.series else None
 
     result = asyncio.run(
-        fetch_and_store(
-            settings, store, series, include_demand=not args.no_demand
-        )
+        fetch_and_store(settings, store, series, include_demand=not args.no_demand)
     )
 
     if result.demand:
@@ -152,16 +184,38 @@ def _cmd_serve(args: argparse.Namespace, settings: Settings, store: Store) -> in
 
     host = args.host or settings.host
     port = args.port or settings.port
+    # uvicorn looks its level up in a bare dict, so an unrecognised one is a
+    # KeyError traceback after we have already printed the URLs.
+    log_level = settings.log_level.lower()
+    if log_level not in _UVICORN_LOG_LEVELS:
+        log_level = "info"
+
     print(f"Dashboard  http://{host}:{port}/")
     print(f"API docs   http://{host}:{port}/docs")
     print(f"Metrics    http://{host}:{port}/metrics")
-    uvicorn.run(
-        create_app(settings, store),
-        host=host,
-        port=port,
-        reload=args.reload,
-        log_level=settings.log_level.lower(),
-    )
+
+    if args.reload:
+        # uvicorn refuses to reload an app *object* -- it needs an import
+        # string it can re-import in the child process. That child builds its
+        # own Settings from the environment, so the CLI's --database and
+        # --env-file do not reach it; say so rather than ignoring them quietly.
+        if args.database or args.env_file != ".env":
+            print(
+                "note: --reload runs the app in a child process that reads its "
+                "settings from the environment, so --database and --env-file "
+                "are not passed through.",
+                file=sys.stderr,
+            )
+        uvicorn.run(
+            "srp_energy.api:create_app",
+            factory=True,
+            host=host,
+            port=port,
+            reload=True,
+            log_level=log_level,
+        )
+    else:
+        uvicorn.run(create_app(settings, store), host=host, port=port, log_level=log_level)
     return 0
 
 
@@ -193,9 +247,7 @@ def _cmd_show(args: argparse.Namespace, settings: Settings, store: Store) -> int
         )
 
     start = date.today() - timedelta(days=args.days)
-    rows = store.readings(
-        series=Series.parse(args.series) if args.series else None, start=start
-    )
+    rows = store.readings(series=Series.parse(args.series) if args.series else None, start=start)
     if not rows:
         return 0
 
@@ -216,22 +268,33 @@ def _fmt(value: float | None, places: int = 2) -> str:
 
 def _cmd_export(args: argparse.Namespace, settings: Settings, store: Store) -> int:
     start = date.today() - timedelta(days=args.days) if args.days is not None else None
-    rows = store.readings(
-        series=Series.parse(args.series) if args.series else None, start=start
-    )
+    rows = store.readings(series=Series.parse(args.series) if args.series else None, start=start)
     if not rows:
         print("No readings to export.", file=sys.stderr)
         return 1
 
-    handle = open(args.output, "w", newline="", encoding="utf-8") if args.output else sys.stdout
+    # Not a context manager: the handle is either a file we own and must close
+    # or stdout, which we must not. The `finally` below closes only the former.
+    handle = (
+        open(args.output, "w", newline="", encoding="utf-8")  # noqa: SIM115
+        if args.output
+        else sys.stdout
+    )
     try:
         if args.format == "json":
             json.dump([r.to_dict() for r in rows], handle, indent=2)
             handle.write("\n")
         else:
             fields = [
-                "series", "usage_date", "meter_read_date", "off_peak", "on_peak",
-                "total", "unit", "high_temp_f", "low_temp_f",
+                "series",
+                "usage_date",
+                "meter_read_date",
+                "off_peak",
+                "on_peak",
+                "total",
+                "unit",
+                "high_temp_f",
+                "low_temp_f",
             ]
             writer = csv.DictWriter(handle, fieldnames=fields)
             writer.writeheader()
@@ -262,12 +325,8 @@ def _cmd_hourly(args: argparse.Namespace, settings: Settings, store: Store) -> i
 
     # SRP publishes a day once it is complete, so "yesterday" is the newest
     # date that reliably has all 24 intervals.
-    end = date.fromisoformat(args.end) if args.end else date.today() - timedelta(days=1)
-    start = (
-        date.fromisoformat(args.start)
-        if args.start
-        else end - timedelta(days=max(0, args.days - 1))
-    )
+    end = args.end or date.today() - timedelta(days=1)
+    start = args.start or end - timedelta(days=max(0, args.days - 1))
     if start > end:
         print(f"--start {start} is after --end {end}", file=sys.stderr)
         return 2
@@ -282,9 +341,7 @@ def _cmd_hourly(args: argparse.Namespace, settings: Settings, store: Store) -> i
         rows = store.intervals(start=start, end=end)
         if rows:
             print()
-            print(
-                f"{'hour':<17} {'series':<11} {'off-peak':>9} {'on-peak':>9} {'total':>8}"
-            )
+            print(f"{'hour':<17} {'series':<11} {'off-peak':>9} {'on-peak':>9} {'total':>8}")
             for r in rows:
                 print(
                     f"{r.interval_start.strftime('%Y-%m-%d %H:%M'):<17} "

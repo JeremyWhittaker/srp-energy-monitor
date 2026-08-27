@@ -1,0 +1,10 @@
+# The CSV fixtures ARE the test suite -- an sdist without them cannot run its
+# own tests. Everything here is synthetic; no real usage data ships.
+include LICENSE README.md CHANGELOG.md CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md CLAUDE.md
+recursive-include tests *.py
+recursive-include tests/fixtures *.csv
+recursive-include srp_energy/web *.html
+recursive-include deploy *.service *.timer
+recursive-include docs *.md
+prune docs/assets
+prune data

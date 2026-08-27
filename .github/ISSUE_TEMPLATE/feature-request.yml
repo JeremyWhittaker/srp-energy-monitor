@@ -1,0 +1,24 @@
+name: Feature request
+description: Suggest something this should do.
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: >
+        Describe the goal rather than the implementation — what are you trying to
+        build or find out with your SRP data?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like it to do?
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What are you doing instead today?

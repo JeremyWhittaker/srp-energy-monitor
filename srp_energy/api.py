@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -70,7 +70,7 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
     # ------------------------------------------------------------- dashboard
 
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
-    async def dashboard() -> HTMLResponse:
+    def dashboard() -> HTMLResponse:
         html = Path(__file__).parent / "web" / "dashboard.html"
         if not html.is_file():  # pragma: no cover - packaging guard
             return HTMLResponse("<h1>SRP Energy Monitor</h1><p>See <a href='/docs'>/docs</a>.</p>")
@@ -79,7 +79,7 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
     # ---------------------------------------------------------------- health
 
     @app.get("/health", tags=["meta"], summary="Liveness and data coverage")
-    async def health() -> dict[str, Any]:
+    def health() -> dict[str, Any]:
         summary = store.summary()
         return {
             "status": "ok",
@@ -88,7 +88,7 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
         }
 
     @app.get(f"{API_PREFIX}/summary", tags=["meta"], summary="Row counts and date coverage")
-    async def summary() -> dict[str, Any]:
+    def summary() -> dict[str, Any]:
         return store.summary()
 
     # ----------------------------------------------------------------- data
@@ -104,7 +104,7 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
             "plan it is a maximum. Check `label` before treating it as either."
         ),
     )
-    async def demand() -> dict[str, Any]:
+    def demand() -> dict[str, Any]:
         latest = store.latest_demand()
         if latest is None:
             raise HTTPException(
@@ -118,7 +118,7 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
         tags=["demand"],
         summary="Demand observations over time",
     )
-    async def demand_history(
+    def demand_history(
         days: int = Query(30, ge=1, le=3650, description="How far back to look."),
         limit: int = Query(500, ge=1, le=10_000),
     ) -> dict[str, Any]:
@@ -135,7 +135,7 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
         tags=["demand"],
         summary="SRP's projected bill amount for the cycle in progress",
     )
-    async def bill_projection() -> dict[str, Any]:
+    def bill_projection() -> dict[str, Any]:
         latest = store.latest_bill_projection()
         if latest is None:
             raise HTTPException(
@@ -149,26 +149,31 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
         tags=["demand"],
         summary="Bill projection over time",
     )
-    async def bill_projection_history(
+    def bill_projection_history(
         days: int = Query(30, ge=1, le=3650),
         limit: int = Query(500, ge=1, le=10_000),
     ) -> dict[str, Any]:
         since = datetime.now() - timedelta(days=days)
         rows = store.bill_projection_history(start=since, limit=limit)
-        return {"count": len(rows), "currency": "USD",
-                "projections": [r.to_dict() for r in rows]}
+        return {"count": len(rows), "currency": "USD", "projections": [r.to_dict() for r in rows]}
 
+    # NOTE: the read endpoints below are deliberately `def`, not `async def`.
+    # They block on sqlite, and FastAPI runs a sync endpoint in a threadpool
+    # while an async one would hold the event loop for the whole query.
     @app.get(
         f"{API_PREFIX}/intervals",
         tags=["readings"],
         summary="Hourly interval readings",
         description=(
-            "Hourly kWh from SRP's Hourly/Interval export. Timestamps are "
-            "Arizona local time, which needs no offset because the state does "
-            "not observe daylight saving."
+            "SRP's Hourly/Interval export. The three energy series are hourly "
+            "kWh; **demand is half-hourly and in kW**. Every row carries its "
+            "own `unit` for that reason -- the envelope `unit` is only set when "
+            "the query is narrowed to a single series. Timestamps are Arizona "
+            "local time, which needs no offset because the state does not "
+            "observe daylight saving."
         ),
     )
-    async def intervals(
+    def intervals(
         series: str | None = Query(
             None, description="usage, generation, net or demand. Omit for all."
         ),
@@ -176,12 +181,13 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
         end: date | None = Query(None, description="Latest date (inclusive)."),
         limit: int | None = Query(None, ge=1, le=100_000),
     ) -> dict[str, Any]:
-        rows = store.intervals(
-            series=_parse_series(series), start=start, end=end, limit=limit
-        )
+        parsed = _parse_series(series)
+        rows = store.intervals(series=parsed, start=start, end=end, limit=limit)
         return {
             "count": len(rows),
-            "unit": "kWh",
+            # Mixed series have no single unit: demand is kW, the rest kWh.
+            # Claiming one here is how a caller mislabels a demand reading.
+            "unit": parsed.unit if parsed else None,
             "intervals": [r.to_dict() for r in rows],
         }
 
@@ -190,7 +196,7 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
         tags=["readings"],
         summary="Daily readings for one or all series",
     )
-    async def readings(
+    def readings(
         series: str | None = Query(
             None, description="usage, generation, net or demand. Omit for all."
         ),
@@ -198,9 +204,7 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
         end: date | None = Query(None, description="Latest usage date (inclusive)."),
         limit: int | None = Query(None, ge=1, le=10_000),
     ) -> dict[str, Any]:
-        rows = store.readings(
-            series=_parse_series(series), start=start, end=end, limit=limit
-        )
+        rows = store.readings(series=_parse_series(series), start=start, end=end, limit=limit)
         return {"count": len(rows), "readings": [r.to_dict() for r in rows]}
 
     @app.get(
@@ -208,7 +212,7 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
         tags=["readings"],
         summary="One series, shaped for charting",
     )
-    async def series_for_chart(
+    def series_for_chart(
         series: str,
         days: int = Query(30, ge=1, le=3650),
     ) -> dict[str, Any]:
@@ -252,9 +256,7 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
         parsed = _parse_series(series)
         async with app.state.fetch_lock:
             try:
-                result = await fetch_and_store(
-                    settings, store, [parsed] if parsed else None
-                )
+                result = await fetch_and_store(settings, store, [parsed] if parsed else None)
             except Exception as exc:
                 logger.exception("fetch failed")
                 raise HTTPException(status_code=502, detail=f"fetch failed: {exc}") from exc
@@ -268,10 +270,20 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
         tags=["meta"],
         summary="Prometheus exposition of the latest values",
     )
-    async def metrics() -> Response:
+    def metrics() -> Response:
         return PlainTextResponse(_render_metrics(store), media_type="text/plain; version=0.0.4")
 
     return app
+
+
+def _escape_label(value: str) -> str:
+    """Escape a Prometheus label value per the exposition format.
+
+    SRP writes these captions, so they are arbitrary text. Deleting the unsafe
+    characters (the previous behaviour) silently changes the caption; a raw
+    newline would break the format outright.
+    """
+    return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
 
 
 def _render_metrics(store: Store) -> str:
@@ -294,13 +306,18 @@ def _render_metrics(store: Store) -> str:
         # The caption rides along as a label because the same metric is a cycle
         # mean on one price plan and a maximum on another; alerting on it
         # without knowing which would be meaningless.
-        caption = (latest.label or "unlabelled").replace("\\", "").replace('"', "")
+        caption = _escape_label(latest.label or "unlabelled")
         add(
             "srp_current_demand_kw",
             "Headline demand figure SRP reports for the current bill cycle. "
             "See the label for whether it is an average or a peak.",
             "gauge",
-            [(f'{{label="{caption}",is_average="{str(latest.is_average).lower()}"}}', latest.demand_kw)],
+            [
+                (
+                    f'{{label="{caption}",is_average="{str(latest.is_average).lower()}"}}',
+                    latest.demand_kw,
+                )
+            ],
         )
         add(
             "srp_current_demand_observed_timestamp_seconds",
@@ -310,12 +327,25 @@ def _render_metrics(store: Store) -> str:
         )
 
     # Most recent complete day per series, which is what alerting cares about.
+    #
+    # The day being reported is deliberately NOT a label. Prometheus identifies
+    # a time series by its label set, so putting the date in one mints a brand
+    # new series every day -- each alive for 24h, none of them rangeable. The
+    # date is published as its own timestamp metric instead, which is how you
+    # ask "is this figure stale?" without fragmenting the series it describes.
     energy_samples: list[tuple[str, float]] = []
+    reading_dates: list[tuple[str, float]] = []
     for series in Series:
         rows = store.readings(series=series)
         if not rows:
             continue
         newest = rows[-1]
+        reading_dates.append(
+            (
+                f'{{series="{series.value}"}}',
+                datetime.combine(newest.usage_date, time.min).timestamp(),
+            )
+        )
         if series is Series.DEMAND:
             if newest.on_peak is not None:
                 add(
@@ -323,24 +353,25 @@ def _render_metrics(store: Store) -> str:
                     "On-peak demand for the most recent day SRP has reported, "
                     "as published in the Demand export.",
                     "gauge",
-                    [(f'{{date="{newest.usage_date.isoformat()}"}}', newest.on_peak)],
+                    [("", newest.on_peak)],
                 )
             continue
         for period, value in (("off_peak", newest.off_peak), ("on_peak", newest.on_peak)):
             if value is not None:
-                energy_samples.append(
-                    (
-                        f'{{series="{series.value}",period="{period}",'
-                        f'date="{newest.usage_date.isoformat()}"}}',
-                        value,
-                    )
-                )
+                energy_samples.append((f'{{series="{series.value}",period="{period}"}}', value))
 
     add(
         "srp_daily_energy_kwh",
         "Most recent daily energy total reported by SRP, by series and period.",
         "gauge",
         energy_samples,
+    )
+    add(
+        "srp_daily_reading_timestamp_seconds",
+        "Usage date of the most recent reading per series, as a Unix timestamp. "
+        "Alert on this going stale rather than reading a date out of a label.",
+        "gauge",
+        reading_dates,
     )
 
     projection = store.latest_bill_projection()
@@ -353,8 +384,10 @@ def _render_metrics(store: Store) -> str:
         )
 
     summary = store.summary()
+    # Not `srp_readings_total`: the `_total` suffix is reserved for counters,
+    # and promtool/OpenMetrics-strict scrapers reject it on a gauge.
     add(
-        "srp_readings_total",
+        "srp_stored_readings",
         "Number of stored daily readings, by series.",
         "gauge",
         [

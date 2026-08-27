@@ -8,12 +8,11 @@ or silently claim success.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 from srp_energy.config import Settings
 from srp_energy.service import fetch_and_store, import_directory
 from srp_energy.storage import Store
-
-from pathlib import Path
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -25,9 +24,7 @@ def test_import_directory_loads_every_series(tmp_path):
 
     assert errors == []
     assert written == 14
-    assert {r.series.value for r in store.readings()} == {
-        "usage", "generation", "net", "demand"
-    }
+    assert {r.series.value for r in store.readings()} == {"usage", "generation", "net", "demand"}
 
 
 def test_import_directory_is_idempotent(tmp_path):

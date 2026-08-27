@@ -7,6 +7,14 @@ Precedence: real environment variables win over `.env`, and CLI flags win over
 both. Point at a different file with `--env-file`, or skip file loading
 entirely with `--env-file /dev/null`.
 
+`--env-file`, `--database` and `--log-level` are **global** flags, so they go
+*before* the subcommand. Put them after it and argparse rejects them:
+
+```bash
+srp-energy-monitor --database /tmp/other.db show    # correct
+srp-energy-monitor show --database /tmp/other.db    # error: unrecognized arguments
+```
+
 ## Settings
 
 | Variable | Default | Purpose |
@@ -24,13 +32,25 @@ entirely with `--env-file /dev/null`.
 | `SRP_DOWNLOAD_TIMEOUT_MS` | `60000` | How long to wait for an export to generate. |
 | `SRP_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`. |
 
-Booleans accept `1/true/yes/on` (case-insensitive); anything else is false.
+Booleans accept `1/true/yes/on` (case-insensitive). An unset **or empty**
+variable falls back to the default -- `SRP_HEADLESS=` (empty) is `true`,
+not `false`. Any other value is false.
 
 ## Credentials
 
-Credentials are read from the environment only. They are never written to the
-database, never logged, and never returned by any API endpoint — `/health`
-reports `credentials_configured: true|false` and nothing more.
+Credentials are read from the environment only. The password is never
+written to the database, never logged, and never returned by any API
+endpoint. The SRP *username* does appear in the log at INFO when a session
+is established (`logging in to SRP as <username>`).
+
+`/health` reports `credentials_configured: true|false`, but it also returns
+the database path, schema version, per-series date coverage, and the latest
+demand and bill-projection records -- so `/health` is not safe to expose
+publicly either.
+
+If a password contains a `#` or spaces, quote it in `.env`
+(`SRP_PASSWORD="pa#ss word"`); an unquoted value can be parsed
+inconsistently depending on whether python-dotenv is installed.
 
 `.env` is gitignored. If you would rather not have a plaintext file at all,
 export the variables from your shell profile or a systemd `EnvironmentFile`
@@ -77,13 +97,17 @@ ExecStart=/opt/srp-energy-monitor/.venv/bin/srp-energy-monitor fetch
 ```
 
 ```ini
-# srp-fetch.timer
+# srp-fetch.timer -- verbatim copy of deploy/srp-fetch.timer
 [Unit]
 Description=Fetch SRP energy data daily
+Documentation=https://github.com/JeremyWhittaker/srp-energy-monitor
 
 [Timer]
-OnCalendar=*-*-* 06:15:00
-RandomizedDelaySec=900
+# SRP settles the previous day overnight, so mid-morning is safely after it.
+OnCalendar=*-*-* 07:30:00
+# Spread the load so we are not hitting SRP at the same second every day.
+RandomizedDelaySec=1800
+# Catch up a run missed while the machine was off.
 Persistent=true
 
 [Install]
@@ -112,10 +136,14 @@ sudo loginctl enable-linger "$USER"
 Check it with `systemctl --user list-timers srp-fetch.timer` and read a run
 with `journalctl --user -u srp-fetch.service`.
 
-The unit runs `fetch` and then `hourly --days 2`, and sets
-`SuccessExitStatus=0 1` deliberately: a scrape against someone else's website
-will fail occasionally, and a failed unit that retries tomorrow is better than
-one that flaps.
+The unit runs `fetch` and then
+`hourly --days 2 --series usage --series generation --series net --series demand`
+(the four `--series` flags matter -- without them `hourly` defaults to usage
+alone), and sets `SuccessExitStatus=0 1` deliberately: a scrape against
+someone else's website will fail occasionally, and a failed unit that
+retries tomorrow is better than one that flaps. `TimeoutStartSec=900` gives
+both `ExecStart` commands room to finish a slow SRP export before systemd
+kills the unit.
 
 `RandomizedDelaySec` spreads the load so you are not hitting SRP at the same
 second every morning. `Persistent=true` catches up a run missed while the
@@ -151,8 +179,9 @@ rows forward with a `NULL` label rather than asserting a meaning they never
 had.
 
 To start over, delete the database; everything except the accumulated history
-of those two scalars can be re-fetched, and `srp-energy-monitor import` will
-rebuild the daily readings from CSVs in `data/downloads/`.
+of those two scalars can be re-fetched, and `srp-energy-monitor import
+data/downloads` will rebuild the daily readings from the CSVs there
+(`directory` is a required positional argument, not a default).
 
 ## Exposing the API
 

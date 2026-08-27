@@ -1,3 +1,6 @@
+# NOTE: WorkingDirectory and ExecStart below assume a checkout at
+# ~/projects/srp-energy-monitor (%h/projects/srp-energy-monitor). Edit both
+# paths to match wherever you actually cloned this repo before installing.
 [Unit]
 Description=Fetch SRP energy data (daily figure, series, and yesterday's hourly)
 Documentation=https://github.com/JeremyWhittaker/srp-energy-monitor

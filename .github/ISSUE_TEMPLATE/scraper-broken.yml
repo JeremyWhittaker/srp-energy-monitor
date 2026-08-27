@@ -1,0 +1,79 @@
+name: Scraper stopped working
+description: A fetch that used to work now fails — SRP most likely changed their markup.
+title: "[scraper] "
+labels: ["scraper", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        SRP changes their portal without notice, and when they do this is the
+        first thing to break. Please run the fetch **headed** first — it usually
+        makes the failure obvious in one glance, and the screenshot is the single
+        most useful thing you can attach:
+
+        ```bash
+        srp-energy-monitor fetch --show-browser
+        ```
+
+        ⚠️ **Scrub your username, account number and address** from anything you paste.
+
+  - type: textarea
+    id: what-happens
+    attributes:
+      label: What happens
+      description: What did the fetch do instead of working?
+      placeholder: Hangs at "logging in to SRP", then times out after 120s.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log output
+      description: Run with `SRP_LOG_LEVEL=DEBUG`. This is automatically formatted as code.
+      render: shell
+    validations:
+      required: true
+
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Where does it break?
+      options:
+        - Cloudflare — "Access Denied" / Ray ID page before SRP loads
+        - Login — credentials submitted but never signs in
+        - Chart selection — cannot find or confirm the usage chart
+        - CSV export — the download never arrives
+        - The demand figure or bill projection is missing/null
+        - Parsing — the CSV downloads but fails to parse
+        - Somewhere else / not sure
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "`srp-energy-monitor --help` header, or the commit you are on."
+    validations:
+      required: true
+
+  - type: input
+    id: plan
+    attributes:
+      label: Your SRP price plan
+      description: >
+        E-27, E-28, Customer Generation Avg Demand, EZ-3, Basic… The demand card
+        differs by plan, so this matters. Leave blank if you would rather not say.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before filing
+      options:
+        - label: I can sign in to myaccount.srpnet.com in a normal browser.
+          required: true
+        - label: My account does **not** have MFA enabled (MFA is unsupported).
+          required: true
+        - label: I have removed personal details from the logs above.
+          required: true

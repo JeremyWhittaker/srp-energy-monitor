@@ -49,8 +49,8 @@ def test_handles_srps_ragged_clock_format():
 def test_am_pm_boundaries_are_not_off_by_twelve():
     text = (
         "Usage date,Interval,Off-peak kWh,On-peak kWh\n"
-        '8/24/2026,12:0 AM,"1","0"\n'   # midnight
-        '8/24/2026,12:0 PM,"2","0"\n'   # noon
+        '8/24/2026,12:0 AM,"1","0"\n'  # midnight
+        '8/24/2026,12:0 PM,"2","0"\n'  # noon
     )
     readings = parse_hourly_csv(text, Series.USAGE)
 
@@ -75,7 +75,7 @@ def test_on_peak_window_lands_in_the_afternoon():
 
 
 def test_rejects_a_file_with_no_interval_column():
-    text = "Usage date,Off-peak kWh\n8/24/2026,\"1\"\n"
+    text = 'Usage date,Off-peak kWh\n8/24/2026,"1"\n'
 
     with pytest.raises(ParseError, match="date\\+interval"):
         parse_hourly_csv(text, Series.USAGE)
@@ -93,7 +93,7 @@ def test_rejects_empty_file():
         ("srp_hourly_net_20260824_20260825.csv", Series.NET),
         ("srp_hourly_generation_20260824_20260825.csv", Series.GENERATION),
         ("srp_hourly_demand_20260824_20260825.csv", Series.DEMAND),
-        ("srp_usage_20260824_120000.csv", None),   # a daily export, not hourly
+        ("srp_usage_20260824_120000.csv", None),  # a daily export, not hourly
         ("random.csv", None),
     ],
 )
@@ -188,9 +188,7 @@ def test_interval_unit_follows_the_series(store):
 
 # ----------------------------------------------------- demand intervals (kW)
 
-DEMAND_FIXTURE = (
-    Path(__file__).parent / "fixtures" / "srp_hourly_demand_20260825_20260825.csv"
-)
+DEMAND_FIXTURE = Path(__file__).parent / "fixtures" / "srp_hourly_demand_20260825_20260825.csv"
 
 
 def test_demand_intervals_parse_their_kw_columns():
@@ -202,9 +200,9 @@ def test_demand_intervals_parse_their_kw_columns():
     readings = parse_hourly_file(DEMAND_FIXTURE, Series.DEMAND)
 
     assert len(readings) == 48
-    assert all(
-        r.off_peak is not None or r.on_peak is not None for r in readings
-    ), "no row may come back with both values empty"
+    assert all(r.off_peak is not None or r.on_peak is not None for r in readings), (
+        "no row may come back with both values empty"
+    )
     assert readings[0].off_peak == 5.0
     assert readings[0].to_dict()["unit"] == "kW"
 
@@ -220,10 +218,7 @@ def test_demand_intervals_are_half_hourly():
 
 def test_a_row_with_no_recognisable_value_column_fails_loudly():
     """Silently storing blanks is what made the kW bug invisible."""
-    text = (
-        "Usage date,Interval,Some Other Column\n"
-        '8/25/2026,12:0 AM,"5"\n'
-    )
+    text = 'Usage date,Interval,Some Other Column\n8/25/2026,12:0 AM,"5"\n'
     with pytest.raises(ParseError, match="no value in"):
         parse_hourly_csv(text, Series.USAGE)
 

@@ -7,7 +7,7 @@ without a network or a Playwright install.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from datetime import date, datetime
 from enum import Enum
 from typing import Any
@@ -40,7 +40,7 @@ class Series(str, Enum):
         return "kW" if self is Series.DEMAND else "kWh"
 
     @classmethod
-    def parse(cls, value: str) -> "Series":
+    def parse(cls, value: str) -> Series:
         try:
             return cls(value.strip().lower())
         except ValueError as exc:

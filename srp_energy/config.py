@@ -7,6 +7,7 @@ API. See .env.example for the full list of settings.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -63,10 +64,13 @@ def _load_dotenv(path: Path) -> None:
             value = value[1:-1]
         else:
             # Strip an unquoted trailing comment: `SRP_PORT=8000  # the port`.
-            # Quoted values keep their '#' since it may be part of a password.
-            hash_at = value.find("#")
-            if hash_at != -1:
-                value = value[:hash_at].rstrip()
+            # Only when the '#' is preceded by whitespace, matching
+            # python-dotenv -- otherwise an unquoted password containing '#'
+            # (e.g. `pa#ssword`) gets silently truncated. Quoted values keep
+            # their '#' unconditionally since it may be part of a password.
+            match = re.search(r"\s#", value)
+            if match is not None:
+                value = value[: match.start()].rstrip()
 
         os.environ.setdefault(key, value)
 
@@ -96,7 +100,7 @@ class Settings:
     log_level: str = "INFO"
 
     @classmethod
-    def from_env(cls, dotenv_path: str | Path | None = ".env") -> "Settings":
+    def from_env(cls, dotenv_path: str | Path | None = ".env") -> Settings:
         if dotenv_path is not None:
             _load_dotenv(Path(dotenv_path))
 

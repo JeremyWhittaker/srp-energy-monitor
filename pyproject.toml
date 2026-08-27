@@ -5,11 +5,27 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "srp-energy-monitor"
 version = "1.1.0"
-description = "Collect, store, chart and serve your Salt River Project (SRP) peak demand and energy data."
+description = "Unofficial Salt River Project (SRP) API: demand charge, usage, solar and bill data as REST, Prometheus and Grafana."
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
-keywords = ["srp", "salt river project", "energy", "solar", "peak demand", "utility", "home automation"]
+keywords = [
+    "salt river project",
+    "srp",
+    "srpnet",
+    "arizona",
+    "demand charge",
+    "peak demand",
+    "energy monitoring",
+    "smart meter",
+    "utility api",
+    "solar",
+    "net metering",
+    "home assistant",
+    "prometheus",
+    "grafana",
+    "self-hosted",
+]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: End Users/Desktop",
@@ -24,7 +40,7 @@ dependencies = []
 scrape = ["playwright>=1.40", "python-dotenv>=1.0"]
 api = ["fastapi>=0.110", "uvicorn[standard]>=0.27"]
 all = ["srp-energy-monitor[scrape,api]"]
-dev = ["srp-energy-monitor[all]", "pytest>=8.0", "httpx>=0.27"]
+dev = ["srp-energy-monitor[all]", "pytest>=8.0", "httpx>=0.27", "ruff>=0.6", "build>=1.2"]
 
 [project.scripts]
 srp-energy-monitor = "srp_energy.cli:main"
@@ -32,12 +48,37 @@ srp-energy-monitor = "srp_energy.cli:main"
 [project.urls]
 Homepage = "https://github.com/JeremyWhittaker/srp-energy-monitor"
 Issues = "https://github.com/JeremyWhittaker/srp-energy-monitor/issues"
+Changelog = "https://github.com/JeremyWhittaker/srp-energy-monitor/blob/main/CHANGELOG.md"
+Source = "https://github.com/JeremyWhittaker/srp-energy-monitor"
 
 [tool.setuptools.packages.find]
 include = ["srp_energy*"]
 
 [tool.setuptools.package-data]
-srp_energy = ["web/*.html"]
+srp_energy = ["web/*.html", "py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["data", ".venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "RUF"]
+ignore = [
+    # Long lines are left to the formatter's judgement rather than failing CI
+    # on a URL or a selector string that cannot usefully be wrapped.
+    "E501",
+    # `Depends(...)` / `Query(...)` in argument defaults is how FastAPI is
+    # written; the rule is aimed at mutable defaults, not this.
+    "B008",
+    # __init__.py groups __all__ by kind (models / parsing / storage) with
+    # comments, which reads better than one alphabetical run.
+    "RUF022",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests assert on literal values and shadow builtins freely.
+"tests/*" = ["B011"]

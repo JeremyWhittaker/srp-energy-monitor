@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import Sequence
 
 from .config import Settings
 from .models import BillProjection, DemandObservation, Series
@@ -49,9 +49,7 @@ class FetchResult:
             "intervals_written": self.intervals_written,
             "series_fetched": self.series_fetched,
             "demand": self.demand.to_dict() if self.demand else None,
-            "bill_projection": (
-                self.bill_projection.to_dict() if self.bill_projection else None
-            ),
+            "bill_projection": (self.bill_projection.to_dict() if self.bill_projection else None),
             "billing_cycle": self.billing_cycle,
             "errors": self.errors,
         }
@@ -169,7 +167,10 @@ def import_directory(store: Store, directory: str | Path) -> tuple[int, list[str
     for path, series in iter_downloads(directory):
         try:
             written += store.upsert_readings(parse_file(path, series))
-        except (ParseError, OSError) as exc:
+        # Deliberately broad: this loop exists to isolate one bad
+        # file from the rest of a backfill, and a UnicodeDecodeError
+        # or csv.Error escaping here aborts every remaining file.
+        except Exception as exc:
             errors.append(f"{path.name}: {exc}")
     return written, errors
 
@@ -177,9 +178,9 @@ def import_directory(store: Store, directory: str | Path) -> tuple[int, list[str
 async def fetch_hourly(
     settings: Settings,
     store: Store,
-    start: "date",
-    end: "date | None" = None,
-    series: "Sequence[Series] | None" = None,
+    start: date,
+    end: date | None = None,
+    series: Sequence[Series] | None = None,
     *,
     max_days_per_request: int = 31,
 ) -> FetchResult:
@@ -233,11 +234,12 @@ async def fetch_hourly(
                 except Exception as exc:
                     logger.error(
                         "hourly %s %s..%s failed: %s",
-                        item.value, window_start, window_end, exc,
+                        item.value,
+                        window_start,
+                        window_end,
+                        exc,
                     )
-                    result.errors.append(
-                        f"hourly {item.value} {window_start}..{window_end}: {exc}"
-                    )
+                    result.errors.append(f"hourly {item.value} {window_start}..{window_end}: {exc}")
                 await asyncio.sleep(1)
             window_start = window_end + timedelta(days=1)
             await asyncio.sleep(1)
