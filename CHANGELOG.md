@@ -18,6 +18,17 @@ Notable changes to this project. Format loosely follows
   2026-08-18 19:30.
 - `SRP_ACCOUNT_ID` setting, required by the JSON backend only. The browser backend reads the
   account from the signed-in session and ignores it.
+- **A Home Assistant custom integration** (`custom_components/srp_energy_monitor/`). Six entities
+  including the two demand figures that must never be confused -- the cycle figure the portal
+  prints, and the billed peak the charge is actually computed from -- plus back-filled long-term
+  statistics for hourly energy and half-hourly demand. Declares no requirements: it uses the
+  standard library and the aiohttp Home Assistant already ships, so nothing can fail to install
+  on HAOS.
+- `GET /api/v1/cycle-peaks`, and `latest_cycle_peak` on `/api/v1/summary`.
+- The dashboard is redesigned around the demand figure rather than treating it as one of five
+  equal cards: billing-cycle progress, the billed peak shown beside the cycle average with the
+  distinction spelled out, a threshold line and highlighted bar marking the peak on the demand
+  chart, and a light/dark toggle. Still one file, still no external resources.
 
 ### Fixed
 - **The README's central argument was wrong.** It claimed the browser was necessary because the

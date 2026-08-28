@@ -475,6 +475,7 @@ class Store:
 
         latest = self.latest_demand()
         projection = self.latest_bill_projection()
+        peak = self.latest_cycle_peak()
         return {
             "database": str(self.path),
             "schema_version": SCHEMA_VERSION,
@@ -495,6 +496,7 @@ class Store:
             "demand_observations": demand_count,
             "latest_demand": latest.to_dict() if latest else None,
             "latest_bill_projection": projection.to_dict() if projection else None,
+            "latest_cycle_peak": peak.to_dict() if peak else None,
         }
 
 

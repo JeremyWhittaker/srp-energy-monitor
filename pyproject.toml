@@ -40,7 +40,18 @@ dependencies = []
 scrape = ["playwright>=1.40", "python-dotenv>=1.0"]
 api = ["fastapi>=0.110", "uvicorn[standard]>=0.27"]
 all = ["srp-energy-monitor[scrape,api]"]
-dev = ["srp-energy-monitor[all]", "pytest>=8.0", "httpx>=0.27", "ruff>=0.6", "build>=1.2"]
+# aiohttp is not a runtime dependency of this package -- it is what Home
+# Assistant ships, and the bundled custom component uses it. The dev extra
+# carries it so the parity test can import that component and prove it has
+# not drifted from srp_energy.jsonapi.
+dev = [
+    "srp-energy-monitor[all]",
+    "pytest>=8.0",
+    "httpx>=0.27",
+    "ruff>=0.6",
+    "build>=1.2",
+    "aiohttp>=3.9",
+]
 
 [project.scripts]
 srp-energy-monitor = "srp_energy.cli:main"

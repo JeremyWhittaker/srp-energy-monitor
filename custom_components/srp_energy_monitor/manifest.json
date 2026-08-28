@@ -1,0 +1,14 @@
+{
+  "domain": "srp_energy_monitor",
+  "name": "SRP Energy Monitor",
+  "codeowners": ["@JeremyWhittaker"],
+  "config_flow": true,
+  "dependencies": ["recorder"],
+  "documentation": "https://github.com/JeremyWhittaker/srp-energy-monitor",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/JeremyWhittaker/srp-energy-monitor/issues",
+  "loggers": ["custom_components.srp_energy_monitor"],
+  "requirements": [],
+  "version": "1.2.0"
+}

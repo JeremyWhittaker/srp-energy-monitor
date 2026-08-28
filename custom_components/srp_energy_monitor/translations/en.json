@@ -1,0 +1,38 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to SRP",
+        "description": "Sign in with the same details you use at myaccount.srpnet.com. Your account number is printed on your bill.",
+        "data": {
+          "account_id": "Account number",
+          "username": "Username",
+          "password": "Password"
+        },
+        "data_description": {
+          "account_id": "Nine digits, with or without dashes."
+        }
+      }
+    },
+    "error": {
+      "invalid_account": "The account number should be nine digits.",
+      "invalid_auth": "SRP rejected that username and password.",
+      "access_blocked": "SRP's bot protection refused the request. Your credentials are probably fine — this varies by network and usually clears on its own. Try again in a few minutes.",
+      "cannot_connect": "Could not reach SRP.",
+      "unknown": "Unexpected error."
+    },
+    "abort": {
+      "already_configured": "That account is already set up."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "current_demand": { "name": "Current demand" },
+      "billed_cycle_peak": { "name": "Billed cycle peak" },
+      "bill_projection": { "name": "Bill projection" },
+      "daily_consumption": { "name": "Daily consumption" },
+      "daily_generation": { "name": "Daily generation" },
+      "daily_net": { "name": "Daily net energy" }
+    }
+  }
+}

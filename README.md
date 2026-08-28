@@ -346,13 +346,43 @@ which quantity it is reading rather than assuming:
 
 ## Home Assistant
 
-The REST API drops straight into `configuration.yaml` — no custom component required:
+A **custom integration** ships in this repo at `custom_components/srp_energy_monitor/`. Copy that
+directory into your Home Assistant `config/custom_components/`, restart, then add it from
+**Settings → Devices & Services**. It asks for your account number, username and password.
+
+It talks to SRP directly over the JSON API — no browser on the Home Assistant box, and
+`"requirements": []`, so nothing is installed at setup time and nothing can fail to build a wheel.
+
+Six entities:
+
+| Entity | Unit | What it is |
+|---|---|---|
+| Current demand | kW | What the portal prints for the cycle in progress — a mean on E-15/E-16, a maximum on E-27. The `is_average` attribute says which. |
+| Billed cycle peak | kW | The single highest on-peak half hour of the cycle, with the timestamp it happened |
+| Bill projection | USD | SRP's own projection for the cycle |
+| Daily consumption / generation / net | kWh | The most recent settled day |
+
+It also writes **long-term statistics**, back-filled on first setup: hourly kWh for consumption,
+generation and net, plus half-hourly demand stored as an hourly mean with min and max. The `max`
+column is the one worth charting — it preserves the highest half hour of each hour, which is the
+granularity demand is billed on.
+
+> [!NOTE]
+> This is **not** Home Assistant's built-in `srp_energy` integration, and it uses a different
+> domain so the two can coexist. The built-in one exposes a single kWh total and cannot see
+> demand at all.
+
+### Or just point REST sensors at the API
+
+If you would rather run the server and keep Home Assistant thin, the REST platform works against
+any host running `srp-energy-monitor serve` — use that host's address, not `127.0.0.1`, unless
+Home Assistant is on the same machine:
 
 ```yaml
 sensor:
   - platform: rest
     name: SRP demand
-    resource: http://127.0.0.1:8000/api/v1/demand
+    resource: http://YOUR-HOST:8000/api/v1/demand
     value_template: "{{ value_json.demand_kw }}"
     unit_of_measurement: kW
     device_class: power
@@ -361,16 +391,14 @@ sensor:
     scan_interval: 3600
 
   - platform: rest
-    name: SRP projected bill
-    resource: http://127.0.0.1:8000/api/v1/bill-projection
-    value_template: "{{ value_json.amount_usd }}"
-    unit_of_measurement: USD
-    device_class: monetary
+    name: SRP billed cycle peak
+    resource: http://YOUR-HOST:8000/api/v1/cycle-peaks?limit=1
+    value_template: "{{ value_json.peaks[0].on_peak_high_demand_kw }}"
+    unit_of_measurement: kW
+    device_class: power
+    state_class: measurement
     scan_interval: 3600
 ```
-
-Then automate against it — shed load, delay the pool pump, or just get a notification when the
-number that sets your bill starts climbing.
 
 ## As a Python library
 

@@ -2,124 +2,206 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<title>SRP Energy Monitor</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<title>SRP Energy Monitor</title>
 <style>
-  :root {
-    --bg: #f6f7f9;
-    --panel: #ffffff;
-    --border: #e2e5ea;
-    --text: #17191c;
-    --muted: #6b7280;
-    --accent: #b3261e;
-    --on-peak: #d1453b;
-    --off-peak: #3b7dd8;
-    --grid: #e8ebef;
-    --shadow: 0 1px 2px rgba(16, 20, 28, .06), 0 4px 12px rgba(16, 20, 28, .05);
+/* Everything is inline and system-font only. This page is served from the same
+   process that holds the data and must render with no network beyond it -- no
+   CDN, no webfont, no build step. Keep it that way. */
+:root {
+  --bg: #f4f6f8;
+  --panel: #ffffff;
+  --panel-2: #eef1f5;
+  --border: #dde2e9;
+  --border-firm: #c4ccd7;
+  --text: #16191d;
+  --text-2: #3d4753;
+  --muted: #69737f;
+  --accent: #b3261e;
+  --accent-soft: #fdeceb;
+  --on-peak: #cf4237;
+  --off-peak: #3b72c4;
+  --good: #17705f;
+  --grid: #e6eaef;
+  --shadow: 0 1px 2px rgba(17, 24, 39, .06), 0 4px 14px rgba(17, 24, 39, .05);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1216;
+    --panel: #171b21;
+    --panel-2: #1e242c;
+    --border: #272e37;
+    --border-firm: #3a444f;
+    --text: #e9ecf0;
+    --text-2: #c2cad3;
+    --muted: #93a0ad;
+    --accent: #f2665c;
+    --accent-soft: #2a1614;
+    --on-peak: #ef6a5e;
+    --off-peak: #6ea3ec;
+    --good: #4fbfa3;
+    --grid: #232a33;
+    --shadow: none;
   }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #0f1115;
-      --panel: #171a20;
-      --border: #262b33;
-      --text: #e8eaed;
-      --muted: #9aa3af;
-      --accent: #f2665c;
-      --on-peak: #f2665c;
-      --off-peak: #6ba4f0;
-      --grid: #232830;
-      --shadow: none;
-    }
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--text);
-    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    -webkit-font-smoothing: antialiased;
-  }
-  .wrap { max-width: 1080px; margin: 0 auto; padding: 32px 20px 64px; }
-  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; margin-bottom: 24px; }
-  h1 { font-size: 22px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
-  .sub { color: var(--muted); font-size: 13px; }
-  .sub.stale { color: var(--accent); }
-  :focus-visible { outline: 2px solid var(--off-peak); outline-offset: 2px; }
-  header .spacer { flex: 1; }
-  button {
-    font: inherit; font-size: 13px; padding: 7px 14px; border-radius: 7px;
-    border: 1px solid var(--border); background: var(--panel); color: var(--text);
-    cursor: pointer; transition: border-color .15s;
-  }
-  button:hover:not(:disabled) { border-color: var(--muted); }
-  button:disabled { opacity: .5; cursor: default; }
-  .cards { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); margin-bottom: 26px; }
-  .card .meta:empty { display: none; }
-  .card {
-    background: var(--panel); border: 1px solid var(--border); border-radius: 11px;
-    padding: 16px 18px; box-shadow: var(--shadow);
-  }
-  .card .label { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); font-weight: 600; }
-  .card .value { font-size: 27px; font-weight: 640; margin-top: 6px; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
-  .card .value .unit { font-size: 14px; font-weight: 500; color: var(--muted); margin-left: 3px; }
-  .card .meta { font-size: 12px; color: var(--muted); margin-top: 4px; }
-  .card.primary .value { color: var(--accent); }
-  .panel {
-    background: var(--panel); border: 1px solid var(--border); border-radius: 11px;
-    padding: 18px; box-shadow: var(--shadow);
-  }
-  .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
-  .tabs button[aria-selected="true"] { background: var(--text); color: var(--bg); border-color: var(--text); }
-  .chart-wrap { overflow-x: auto; }
-  svg { display: block; width: 100%; height: auto; min-width: 460px; }
-  .legend { display: flex; gap: 18px; margin-top: 12px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
-  .legend span { display: inline-flex; align-items: center; gap: 6px; }
-  .swatch { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
-  .msg { color: var(--muted); padding: 40px 0; text-align: center; font-size: 14px; }
-  .msg code { background: var(--grid); padding: 2px 6px; border-radius: 4px; font-size: 13px; }
-  footer { margin-top: 28px; font-size: 12px; color: var(--muted); text-align: center; }
-  footer a { color: inherit; }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1216;
+  --panel: #171b21;
+  --panel-2: #1e242c;
+  --border: #272e37;
+  --border-firm: #3a444f;
+  --text: #e9ecf0;
+  --text-2: #c2cad3;
+  --muted: #93a0ad;
+  --accent: #f2665c;
+  --accent-soft: #2a1614;
+  --on-peak: #ef6a5e;
+  --off-peak: #6ea3ec;
+  --good: #4fbfa3;
+  --grid: #232a33;
+  --shadow: none;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 15px; line-height: 1.5; -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1120px; margin: 0 auto; padding: 24px 20px 56px; }
+
+header { display: flex; align-items: baseline; gap: 12px 16px; flex-wrap: wrap; margin-bottom: 22px; }
+h1 { font-size: 1.2rem; font-weight: 650; letter-spacing: -.01em; margin: 0; }
+.coverage { color: var(--muted); font-size: .85rem; }
+.spacer { flex: 1 1 auto; }
+#updated { color: var(--muted); font-size: .82rem; }
+#updated.stale { color: var(--accent); font-weight: 600; }
+
+button {
+  font: inherit; font-size: .85rem; color: var(--text);
+  background: var(--panel); border: 1px solid var(--border-firm);
+  border-radius: 7px; padding: 6px 12px; cursor: pointer;
+}
+button:hover { background: var(--panel-2); }
+button:focus-visible { outline: 2px solid var(--off-peak); outline-offset: 2px; }
+.icon-btn { padding: 6px 9px; display: inline-flex; align-items: center; }
+
+/* ---- the hero: demand is the product, not one of five equal cards ---- */
+.hero {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: var(--shadow); padding: 22px 24px; margin-bottom: 16px;
+  display: grid; gap: 22px 32px; grid-template-columns: minmax(220px, 1.1fr) minmax(200px, 1fr) minmax(180px, .9fr);
+}
+.hero .label {
+  font-size: .72rem; font-weight: 650; letter-spacing: .07em; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 8px;
+}
+.figure { display: flex; align-items: baseline; gap: 6px; }
+.figure .value { font-size: 2.7rem; font-weight: 680; letter-spacing: -.02em; line-height: 1.02; }
+.figure .unit { font-size: .95rem; color: var(--muted); font-weight: 600; }
+.primary .value { color: var(--accent); }
+.meta { color: var(--muted); font-size: .82rem; margin-top: 8px; }
+.qualifier {
+  display: inline-block; margin-top: 8px; padding: 2px 8px; border-radius: 999px;
+  font-size: .73rem; font-weight: 600; background: var(--accent-soft); color: var(--accent);
+}
+
+/* Billing-cycle progress. A demand charge is set once per cycle, so how far
+   through the cycle you are changes what the number means. */
+.cycle { margin-top: 14px; }
+.cycle-bar { height: 6px; border-radius: 999px; background: var(--panel-2); overflow: hidden; }
+.cycle-fill { height: 100%; background: var(--off-peak); border-radius: 999px; }
+.cycle-text { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: .76rem; margin-top: 6px; }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); padding: 14px 16px; }
+.card .value { font-size: 1.5rem; font-weight: 660; letter-spacing: -.01em; }
+.card .unit { font-size: .8rem; color: var(--muted); font-weight: 600; }
+.card .meta { font-size: .78rem; }
+
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); padding: 16px; }
+.tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 4px; }
+.tabs button[aria-selected="true"] { background: var(--text); color: var(--panel); border-color: var(--text); }
+.chart-wrap { overflow-x: auto; margin-top: 10px; }
+/* Scoped to the chart on purpose: a bare `svg` selector also captures the
+   inline theme icon in the header and stretches it to full width. */
+#chart { width: 100%; height: auto; min-width: 460px; display: block; }
+.icon-btn svg { display: block; }
+.legend { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; color: var(--muted); font-size: .8rem; margin-top: 8px; }
+.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+.legend .right { margin-left: auto; }
+
+footer { margin-top: 26px; text-align: center; color: var(--muted); font-size: .8rem; }
+footer a { color: var(--muted); }
+
+@media (max-width: 860px) {
+  .hero { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 560px) {
+  .wrap { padding: 18px 14px 44px; }
+  .hero { grid-template-columns: 1fr; gap: 18px; padding: 18px; }
+  .figure .value { font-size: 2.3rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <header>
-    <h1>SRP Energy Monitor</h1>
-    <span class="sub" id="coverage"></span>
-    <div class="spacer"></div>
-    <span class="sub" id="updated"></span>
-    <button id="refresh">Refresh</button>
-    <button id="fetch">Fetch from SRP</button>
-  </header>
 
-  <div class="cards" id="cards"></div>
+<header>
+  <h1>SRP Energy Monitor</h1>
+  <span class="coverage" id="coverage"></span>
+  <span class="spacer"></span>
+  <span id="updated"></span>
+  <button id="theme" class="icon-btn" type="button" title="Switch light / dark" aria-label="Switch light or dark theme"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.5a6.5 6.5 0 0 1 0 13z" fill="currentColor"/></svg></button>
+  <button id="refresh" type="button">Refresh</button>
+  <button id="fetch" type="button">Fetch from SRP</button>
+</header>
 
-  <div class="panel">
-    <div class="tabs" id="tabs" role="tablist"></div>
-    <div class="chart-wrap"><svg id="chart" viewBox="0 0 900 340" role="img" aria-label="Energy chart"></svg></div>
-    <div class="legend" id="legend"></div>
+<section class="hero" id="hero" aria-label="Demand summary"></section>
+
+<div class="cards" id="cards"></div>
+
+<div class="panel">
+  <div class="tabs" id="tabs" role="tablist" aria-label="Series"></div>
+  <div class="chart-wrap">
+    <svg id="chart" viewBox="0 0 900 340" role="img" aria-label="Chart"></svg>
   </div>
+  <div class="legend" id="legend"></div>
+</div>
 
-  <footer>
-    <a href="/docs">API docs</a> &middot; <a href="/metrics">Prometheus metrics</a> &middot;
-    <a href="/health">Health</a><br>
-    Not affiliated with or endorsed by Salt River Project.
-  </footer>
+<footer>
+  <a href="/docs">API docs</a> · <a href="/metrics">Prometheus metrics</a> · <a href="/health">Health</a>
+  <div>Not affiliated with or endorsed by Salt River Project.</div>
+</footer>
+
 </div>
 
 <script>
+"use strict";
+
 const SERIES = [
-  { key: 'demand',     label: 'Demand' },
-  { key: 'usage',      label: 'Usage' },
-  { key: 'generation', label: 'Generation' },
-  { key: 'net',        label: 'Net energy' },
+  { key: "demand",     label: "Demand" },
+  { key: "usage",      label: "Usage" },
+  { key: "generation", label: "Generation" },
+  { key: "net",        label: "Net energy" },
 ];
-let active = 'demand';
-let days = 30;
+const DAYS = 30;
+let active = "demand";
+let cyclePeak = null;
 
 const $ = (id) => document.getElementById(id);
-const fmt = (n, p = 2) => (n === null || n === undefined ? '--' : Number(n).toFixed(p));
+
+/* SRP captions are scraped from a page we do not control, so every value that
+   reaches innerHTML goes through here first. */
+function esc(value) {
+  return String(value == null ? "" : value)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
 
 async function getJSON(url, options) {
   const res = await fetch(url, options);
@@ -130,234 +212,274 @@ async function getJSON(url, options) {
   return res.json();
 }
 
-function renderTabs() {
-  $('tabs').innerHTML = '';
-  for (const s of SERIES) {
-    const b = document.createElement('button');
-    b.textContent = s.label;
-    b.setAttribute('role', 'tab');
-    b.setAttribute('aria-selected', String(s.key === active));
-    b.onclick = () => { active = s.key; renderTabs(); loadChart(); };
-    $('tabs').append(b);
-  }
+const fmtDate = (iso) => iso ? new Date(iso + (iso.length === 10 ? "T00:00:00" : "")).toLocaleDateString() : "";
+const fmtDateTime = (iso) => iso ? new Date(iso).toLocaleString() : "";
+
+/* ------------------------------------------------------------------ theme */
+
+function applyTheme(mode) {
+  if (mode) document.documentElement.setAttribute("data-theme", mode);
+  else document.documentElement.removeAttribute("data-theme");
+}
+try { applyTheme(localStorage.getItem("srp-theme")); } catch (e) { /* private mode */ }
+
+$("theme").addEventListener("click", () => {
+  const current = document.documentElement.getAttribute("data-theme");
+  const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  const next = current ? (current === "dark" ? "light" : "dark") : (prefersDark ? "light" : "dark");
+  applyTheme(next);
+  try { localStorage.setItem("srp-theme", next); } catch (e) { /* ignore */ }
+});
+
+/* -------------------------------------------------------------------- hero */
+
+function cycleProgress(peak) {
+  if (!peak || !peak.cycle_start || !peak.cycle_end) return "";
+  const start = new Date(peak.cycle_start + "T00:00:00");
+  const end = new Date(peak.cycle_end + "T00:00:00");
+  const total = Math.max(1, Math.round((end - start) / 86400000));
+  const gone = Math.min(total, Math.max(0, Math.round((Date.now() - start) / 86400000)));
+  const pct = Math.round((gone / total) * 100);
+  return `
+    <div class="cycle">
+      <div class="cycle-bar"><div class="cycle-fill" style="width:${pct}%"></div></div>
+      <div class="cycle-text">
+        <span>Day ${gone} of ${total}</span>
+        <span>${esc(fmtDate(peak.cycle_start))} → ${esc(fmtDate(peak.cycle_end))}</span>
+      </div>
+    </div>`;
 }
 
-// SRP's captions land in the DOM, so escape them. They are scraped from a
-// page we do not control, which is exactly the situation innerHTML punishes.
-const esc = (s) =>
-  String(s).replace(/[&<>"']/g, (c) =>
-    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+function renderHero(summary) {
+  const demand = summary.latest_demand;
+  const peak = summary.latest_cycle_peak;
+  const bill = summary.latest_bill_projection;
+  cyclePeak = peak;
+  const blocks = [];
 
-function card({ label, value, unit, meta, primary }) {
-  return `<div class="card${primary ? ' primary' : ''}">
+  /* The headline figure. On an average-demand plan this is a cycle mean; on a
+     peak plan it is a maximum. The caption is data, not decoration -- saying
+     which one it is prevents the mistake that makes a 5.4 look like a 12.7. */
+  if (demand) {
+    blocks.push(`
+      <div class="primary">
+        <div class="label">${esc(demand.label || "Current demand")}</div>
+        <div class="figure"><span class="value">${demand.demand_kw.toFixed(2)}</span><span class="unit">kW</span></div>
+        <div class="qualifier">${demand.is_average ? "cycle average" : "cycle maximum"}</div>
+        <div class="meta">as of ${esc(fmtDateTime(demand.observed_at))}</div>
+      </div>`);
+  } else {
+    blocks.push(`<div><div class="label">Current demand</div>
+      <div class="figure"><span class="value">—</span></div>
+      <div class="meta">not yet collected</div></div>`);
+  }
+
+  /* The billed peak: a different quantity from the one above whenever the plan
+     bills an average. Both are shown because the bill follows this one. */
+  if (peak) {
+    blocks.push(`
+      <div>
+        <div class="label">Billed peak this cycle</div>
+        <div class="figure"><span class="value">${peak.on_peak_high_demand_kw.toFixed(1)}</span><span class="unit">kW</span></div>
+        <div class="meta">${peak.occurred_at ? "highest half hour · " + esc(fmtDateTime(peak.occurred_at)) : "highest on-peak half hour"}</div>
+        ${cycleProgress(peak)}
+      </div>`);
+  }
+
+  if (bill) {
+    blocks.push(`
+      <div>
+        <div class="label">Projected bill</div>
+        <div class="figure"><span class="value">$${bill.amount_usd.toFixed(2)}</span></div>
+        <div class="meta">${esc(bill.basis || fmtDateTime(bill.observed_at))}</div>
+      </div>`);
+  }
+
+  $("hero").innerHTML = blocks.join("");
+}
+
+/* ------------------------------------------------------------------- cards */
+
+function card(label, value, unit, meta) {
+  return `<div class="card">
     <div class="label">${esc(label)}</div>
-    <div class="value">${esc(value)}${unit ? `<span class="unit">${esc(unit)}</span>` : ''}</div>
-    <div class="meta">${meta ? esc(meta) : ''}</div>
+    <div><span class="value">${esc(value)}</span>${unit ? `<span class="unit"> ${esc(unit)}</span>` : ""}</div>
+    ${meta ? `<div class="meta">${esc(meta)}</div>` : ""}
   </div>`;
 }
 
-async function loadCards() {
-  const summary = await getJSON('/api/v1/summary');
+async function loadSummary() {
+  const summary = await getJSON("/api/v1/summary");
+  renderHero(summary);
+
+  const series = summary.series || {};
+  const names = Object.keys(series);
+  const newest = names.map((n) => series[n].last_date).filter(Boolean).sort().pop();
+
+  /* Series are published a day apart, so ask from the *earliest* last_date --
+     otherwise whichever series lags is missing from the response entirely. */
+  const oldestLast = names.map((n) => series[n].last_date).filter(Boolean).sort()[0];
   const cards = [];
-  const demand = summary.latest_demand;
-  const bill = summary.latest_bill_projection;
-
-  // The caption comes from SRP because its meaning is plan-dependent: an
-  // average on some price plans, a maximum on others.
-  cards.push(card({
-    primary: true,
-    label: (demand && demand.label) || 'Current demand',
-    value: fmt(demand && demand.demand_kw),
-    unit: 'kW',
-    meta: demand ? new Date(demand.observed_at).toLocaleString() : 'not yet collected',
-  }));
-
-  if (bill) {
-    cards.push(card({
-      label: 'Projected bill',
-      value: '$' + Number(bill.amount_usd).toFixed(2),
-      meta: bill.basis || new Date(bill.observed_at).toLocaleString(),
-    }));
-  }
-
-  // The latest day SRP has published per series -- the numbers people
-  // actually want, not how many rows happen to be in the database.
-  //
-  // Query from the *earliest* of the per-series last dates, not the newest:
-  // SRP can publish one series a day behind another, and asking only for the
-  // newest date drops the laggard's card off the page entirely.
-  const lastDates = Object.values(summary.series).map((i) => i.last_date).filter(Boolean);
-  if (lastDates.length) {
-    const from = [...lastDates].sort()[0];
-    const newest = [...lastDates].sort().pop();
-    const { readings } = await getJSON(`/api/v1/readings?start=${from}`);
-
-    const latest = {};
-    for (const r of readings) {
-      if (!latest[r.series] || r.usage_date > latest[r.series].usage_date) latest[r.series] = r;
-    }
+  if (oldestLast) {
+    const { readings } = await getJSON(`/api/v1/readings?start=${oldestLast}`);
     for (const s of SERIES) {
-      const r = latest[s.key];
-      if (!r || s.key === 'demand') continue;
-      const stale = r.usage_date !== newest ? `  ·  ${r.usage_date}` : '';
-      cards.push(card({
-        label: s.label,
-        value: fmt(r.total, 1),
-        unit: r.unit,
-        meta: `${fmt(r.off_peak, 1)} off-peak / ${fmt(r.on_peak, 1)} on-peak${stale}`,
-      }));
+      if (s.key === "demand") continue;
+      const row = readings.filter((r) => r.series === s.key).sort((a, b) => a.usage_date < b.usage_date ? 1 : -1)[0];
+      if (!row) continue;
+      const lagging = row.usage_date !== newest ? ` · ${row.usage_date}` : "";
+      cards.push(card(
+        s.label,
+        row.total == null ? "—" : row.total.toFixed(1),
+        row.unit,
+        `${row.off_peak ?? 0} off-peak / ${row.on_peak ?? 0} on-peak${lagging}`,
+      ));
     }
   }
+  $("cards").innerHTML = cards.join("");
 
-  $('cards').innerHTML = cards.join('');
-
-  // Deliberately no day count here: the chart legend reports how many days it
-  // is *plotting*, and a second, differently-derived count beside it reads as
-  // a contradiction rather than as extra information.
-  const infos = Object.values(summary.series);
-  const parts = [];
-  if (infos.length) {
-    const first = infos.map((i) => i.first_date).filter(Boolean).sort()[0];
-    const last = infos.map((i) => i.last_date).filter(Boolean).sort().pop();
-    if (first && last) parts.push(`${first} → ${last}`);
-  }
-  const iv = summary.intervals;
-  if (iv && iv.count) parts.push(`${iv.count} hourly intervals`);
-  $('coverage').textContent = parts.join('  ·  ');
-  $('updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
-  $('updated').classList.remove('stale');
+  const first = names.map((n) => series[n].first_date).filter(Boolean).sort()[0];
+  const intervals = (summary.intervals || {}).count || 0;
+  $("coverage").textContent = first && newest
+    ? `${first} → ${newest} · ${intervals.toLocaleString()} intervals`
+    : "no data yet";
 }
 
-function renderEmpty(message) {
-  $('chart').innerHTML = '';
-  $('legend').innerHTML = `<div class="msg" style="flex:1">${esc(message)}</div>`;
-}
+/* ------------------------------------------------------------------- chart */
 
-// Hand-rolled SVG bar chart. Deliberately dependency-free so the dashboard
-// works with no network access and nothing to keep up to date.
+/* Hand-rolled SVG rather than a charting library: this page must work with no
+   network access, and one stacked bar chart does not justify a dependency. */
 function drawChart(data) {
-  const svg = $('chart');
-  const W = 900, H = 340, padL = 54, padR = 16, padT = 16, padB = 46;
-  const n = data.labels.length;
-  if (!n) { renderEmpty('No data for this series yet.'); return; }
+  const svg = $("chart");
+  const W = 900, H = 340, padL = 56, padR = 16, padT = 18, padB = 48;
+  const n = data.count || 0;
+  if (!n) {
+    svg.innerHTML = `<text x="${W / 2}" y="${H / 2}" text-anchor="middle" fill="var(--muted)" font-size="14">No ${esc(data.label || "")} data yet</text>`;
+    $("legend").innerHTML = "";
+    return;
+  }
 
-  const isDemand = data.series === 'demand';
-  const stacks = isDemand
-    ? [{ values: data.on_peak, color: 'var(--on-peak)', name: `On-peak (${data.unit})` }]
-    : [
-        { values: data.off_peak, color: 'var(--off-peak)', name: `Off-peak (${data.unit})` },
-        { values: data.on_peak,  color: 'var(--on-peak)',  name: `On-peak (${data.unit})` },
-      ];
-
-  // Net energy can go negative when generation exceeds usage, so the scale
-  // has to accommodate a baseline that is not zero.
-  let hi = 0, lo = 0;
+  const isDemand = data.series === "demand";
+  const stacks = [];
   for (let i = 0; i < n; i++) {
+    const off = data.off_peak[i] || 0;
+    const on = data.on_peak[i] || 0;
+    stacks.push(isDemand ? [{ v: on, c: "var(--on-peak)" }] : [{ v: off, c: "var(--off-peak)" }, { v: on, c: "var(--on-peak)" }]);
+  }
+
+  let hi = 0, lo = 0;
+  for (const parts of stacks) {
     let pos = 0, neg = 0;
-    for (const s of stacks) {
-      const v = s.values[i] || 0;
-      if (v >= 0) pos += v; else neg += v;
-    }
+    for (const p of parts) (p.v >= 0 ? pos += p.v : neg += p.v);
     hi = Math.max(hi, pos); lo = Math.min(lo, neg);
   }
-  if (hi === 0 && lo === 0) hi = 1;
-  const span = hi - lo || 1;
-  const y = (v) => padT + (hi - v) / span * (H - padT - padB);
-  const plotW = W - padL - padR;
-  const bw = Math.max(2, Math.min(28, plotW / n * 0.68));
+  /* Keep the billed peak inside the frame when it is drawn. */
+  const threshold = isDemand && cyclePeak ? cyclePeak.on_peak_high_demand_kw : null;
+  if (threshold != null) hi = Math.max(hi, threshold);
+  if (hi === lo) hi = lo + 1;
 
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const y = (v) => padT + plotH - ((v - lo) / (hi - lo)) * plotH;
+  const bw = Math.max(2, Math.min(28, (plotW / n) * 0.68));
   const parts = [];
 
-  // Horizontal gridlines with value labels.
-  const ticks = 5;
-  for (let i = 0; i <= ticks; i++) {
-    const v = lo + (span * i) / ticks;
-    const yy = y(v).toFixed(1);
-    parts.push(`<line x1="${padL}" x2="${W - padR}" y1="${yy}" y2="${yy}" stroke="var(--grid)" stroke-width="1"/>`);
-    parts.push(`<text x="${padL - 9}" y="${yy}" text-anchor="end" dominant-baseline="middle" font-size="11" fill="var(--muted)">${v.toFixed(span < 10 ? 1 : 0)}</text>`);
+  for (let g = 0; g <= 4; g++) {
+    const v = lo + ((hi - lo) * g) / 4;
+    const yy = y(v);
+    parts.push(`<line x1="${padL}" y1="${yy}" x2="${W - padR}" y2="${yy}" stroke="var(--grid)" stroke-width="1"/>`);
+    parts.push(`<text x="${padL - 8}" y="${yy + 4}" text-anchor="end" fill="var(--muted)" font-size="11">${v.toFixed(1)}</text>`);
   }
-  if (lo < 0) {
-    parts.push(`<line x1="${padL}" x2="${W - padR}" y1="${y(0).toFixed(1)}" y2="${y(0).toFixed(1)}" stroke="var(--muted)" stroke-width="1"/>`);
+  if (lo < 0) parts.push(`<line x1="${padL}" y1="${y(0)}" x2="${W - padR}" y2="${y(0)}" stroke="var(--border-firm)" stroke-width="1"/>`);
+
+  let peakIndex = -1;
+  if (threshold != null) {
+    const yy = y(threshold);
+    parts.push(`<line x1="${padL}" y1="${yy}" x2="${W - padR}" y2="${yy}" stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="5 4"/>`);
+    parts.push(`<text x="${W - padR}" y="${yy - 6}" text-anchor="end" fill="var(--accent)" font-size="11" font-weight="600">billed peak ${threshold.toFixed(1)} kW</text>`);
+    if (cyclePeak.occurred_at) {
+      const day = cyclePeak.occurred_at.slice(0, 10);
+      peakIndex = data.labels.indexOf(day);
+    }
   }
 
   for (let i = 0; i < n; i++) {
-    const cx = padL + plotW * (i + 0.5) / n;
+    const cx = padL + (plotW / n) * (i + 0.5);
     const x = cx - bw / 2;
-    let posBase = 0, negBase = 0;
-    for (const s of stacks) {
-      const v = s.values[i];
-      // Only skip *missing* values. A genuine 0.0 -- an off-peak day with no
-      // on-peak demand, say -- must draw a baseline bar, or the chart makes
-      // "SRP reported zero" look identical to "SRP reported nothing".
-      if (v === null || v === undefined) continue;
-      let top, height;
-      if (v > 0) { top = y(posBase + v); height = y(posBase) - top; posBase += v; }
-      else { top = y(negBase); height = y(negBase + v) - top; negBase += v; }
-      parts.push(
-        `<rect x="${x.toFixed(1)}" y="${top.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(1, height).toFixed(1)}" fill="${s.color}" rx="1.5">` +
-        `<title>${data.labels[i]} — ${s.name}: ${fmt(v)} ${data.unit}</title></rect>`
-      );
-    }
-
-    // Label roughly every 5th day so the axis stays readable, plus the last
-    // day -- but only when it is far enough from the previous tick that the
-    // two do not overprint each other.
-    const every = Math.ceil(n / 12);
-    const onTick = i % every === 0;
-    const lastAndClear = i === n - 1 && (n - 1) % every >= every / 2;
-    if (onTick || lastAndClear) {
-      const d = data.labels[i].slice(5).replace('-', '/');
-      parts.push(`<text x="${cx.toFixed(1)}" y="${H - padB + 18}" text-anchor="middle" font-size="11" fill="var(--muted)">${d}</text>`);
+    let base = 0;
+    for (const p of stacks[i]) {
+      if (!p.v) continue;
+      const top = y(base + p.v), bottom = y(base);
+      parts.push(`<rect x="${x.toFixed(1)}" y="${Math.min(top, bottom).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.abs(bottom - top).toFixed(1)}" fill="${p.c}" ${i === peakIndex ? 'stroke="var(--accent)" stroke-width="2"' : ""}><title>${esc(data.labels[i])}: ${p.v} ${esc(data.unit)}</title></rect>`);
+      base += p.v;
     }
   }
 
-  svg.innerHTML = parts.join('');
-  svg.setAttribute(
-    'aria-label',
-    `${data.label}, ${n} days from ${data.labels[0]} to ${data.labels[n - 1]}, in ${data.unit}`
-  );
-  $('legend').innerHTML = stacks
-    .map((s) => `<span><i class="swatch" style="background:${s.color}"></i>${s.name}</span>`)
-    .join('') + `<span style="margin-left:auto">${n} days</span>`;
+  const every = Math.ceil(n / 12);
+  for (let i = 0; i < n; i++) {
+    if (i % every !== 0 && i !== n - 1) continue;
+    if (i === n - 1 && (n - 1) % every !== 0 && n > 1 && (n - 1) - Math.floor((n - 1) / every) * every < every / 2) continue;
+    const cx = padL + (plotW / n) * (i + 0.5);
+    parts.push(`<text x="${cx.toFixed(1)}" y="${H - padB + 18}" text-anchor="middle" fill="var(--muted)" font-size="11">${esc(data.labels[i].slice(5))}</text>`);
+  }
+
+  svg.innerHTML = parts.join("");
+  svg.setAttribute("aria-label",
+    `${data.label}, ${n} days from ${data.labels[0]} to ${data.labels[n - 1]}, in ${data.unit}` +
+    (threshold != null ? `. Billed cycle peak ${threshold} kW.` : ""));
+
+  const bits = isDemand
+    ? [`<span><span class="swatch" style="background:var(--on-peak)"></span>On-peak (kW)</span>`]
+    : [`<span><span class="swatch" style="background:var(--off-peak)"></span>Off-peak</span>`,
+       `<span><span class="swatch" style="background:var(--on-peak)"></span>On-peak</span>`];
+  if (threshold != null) bits.push(`<span><span class="swatch" style="background:var(--accent)"></span>Billed cycle peak</span>`);
+  bits.push(`<span class="right">${n} days</span>`);
+  $("legend").innerHTML = bits.join("");
+}
+
+function renderTabs() {
+  $("tabs").innerHTML = SERIES.map((s) =>
+    `<button type="button" role="tab" aria-selected="${s.key === active}" data-key="${s.key}">${esc(s.label)}</button>`
+  ).join("");
+  for (const b of $("tabs").querySelectorAll("button")) {
+    b.addEventListener("click", () => { active = b.dataset.key; renderTabs(); loadChart(); });
+  }
 }
 
 async function loadChart() {
-  try {
-    drawChart(await getJSON(`/api/v1/series/${active}?days=${days}`));
-  } catch (err) {
-    renderEmpty(`Could not load data: ${err.message}`);
-  }
+  drawChart(await getJSON(`/api/v1/series/${active}?days=${DAYS}`));
 }
+
+/* -------------------------------------------------------------------- boot */
 
 async function refresh() {
   try {
-    await loadCards();
+    await loadSummary();
     await loadChart();
+    $("updated").textContent = "Updated " + new Date().toLocaleTimeString();
+    $("updated").classList.remove("stale");
   } catch (err) {
-    // The cards still hold the last good values. Say so, rather than leaving
-    // an "Updated <now>" label asserting freshness for data that did not load.
-    $('updated').textContent = 'Refresh failed — showing last known values';
-    $('updated').classList.add('stale');
-    renderEmpty(`Could not reach the API: ${err.message}`);
+    $("updated").textContent = "Refresh failed — showing last known values";
+    $("updated").classList.add("stale");
+    console.error(err);
   }
 }
 
-$('refresh').onclick = refresh;
-$('fetch').onclick = async (e) => {
-  const btn = e.currentTarget;
+$("refresh").addEventListener("click", refresh);
+$("fetch").addEventListener("click", async () => {
+  const btn = $("fetch");
   btn.disabled = true;
-  btn.textContent = 'Fetching…';
+  btn.textContent = "Fetching…";
   try {
-    const result = await getJSON('/api/v1/fetch', { method: 'POST' });
-    if (result.errors && result.errors.length) alert('Fetch finished with errors:\n' + result.errors.join('\n'));
+    const result = await getJSON("/api/v1/fetch", { method: "POST" });
+    if (result.errors && result.errors.length) console.warn(result.errors);
     await refresh();
   } catch (err) {
-    alert('Fetch failed: ' + err.message);
+    $("updated").textContent = "Fetch failed — " + err.message;
+    $("updated").classList.add("stale");
   } finally {
     btn.disabled = false;
-    btn.textContent = 'Fetch from SRP';
+    btn.textContent = "Fetch from SRP";
   }
-};
+});
 
 renderTabs();
 refresh();
