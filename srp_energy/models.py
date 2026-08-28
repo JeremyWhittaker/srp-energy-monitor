@@ -168,6 +168,48 @@ class IntervalReading:
 
 
 @dataclass(frozen=True, slots=True)
+class CyclePeak:
+    """The demand figure a single billing cycle was charged on.
+
+    On a demand plan this is the number that moves the bill, and it is not
+    derivable from the hourly series: SRP bills the highest **half-hour** of
+    on-peak demand, while hourly data averages two half-hours together. On this
+    account the hourly approximation has landed anywhere from 2% to 39% below
+    the billed figure depending on how hard load ramped inside the hour, so the
+    two are stored separately rather than one being computed from the other.
+
+    ``is_average_demand_rate`` records which quantity the plan bills, taken
+    from SRP's own boolean rather than inferred from a caption:
+
+    * ``True``  -- an average-demand plan (E-15, E-16); the charge follows a
+      mean of daily maxima
+    * ``False`` -- a peak-demand plan (E-27); the charge follows this single
+      maximum
+
+    ``occurred_at`` is naive Arizona local time, matching ``IntervalReading``.
+    SRP labels the interval by the moment it *ends*, so a peak reported at
+    20:00 is the 19:30-20:00 half hour -- the last one inside a summer on-peak
+    window that closes at 20:00.
+    """
+
+    cycle_start: date
+    cycle_end: date
+    on_peak_high_demand_kw: float
+    occurred_at: datetime | None = None
+    is_average_demand_rate: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "cycle_start": self.cycle_start.isoformat(),
+            "cycle_end": self.cycle_end.isoformat(),
+            "on_peak_high_demand_kw": self.on_peak_high_demand_kw,
+            "unit": "kW",
+            "occurred_at": self.occurred_at.isoformat() if self.occurred_at else None,
+            "is_average_demand_rate": self.is_average_demand_rate,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class BillProjection:
     """SRP's projected bill amount for the cycle in progress.
 

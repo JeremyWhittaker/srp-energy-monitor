@@ -1,0 +1,326 @@
+{
+ "dailyMinDate": "2026-03-02T07:00:00Z",
+ "dailyMaxDate": "2026-03-08T07:00:00Z",
+ "isAverageDemandRate": true,
+ "isIDRRate": false,
+ "dailyConsumptionList": [
+  {
+   "day": "2026-03-02T07:00:00Z",
+   "date": "2026-03-02T07:00:00Z",
+   "meterReadDate": "2026-03-03T00:00:00-07:00",
+   "superOffPeak": 0.0,
+   "shoulder": 0.0,
+   "offPeak": 80.0,
+   "onPeak": 20.0,
+   "total": 0.0
+  },
+  {
+   "day": "2026-03-03T07:00:00Z",
+   "date": "2026-03-03T07:00:00Z",
+   "meterReadDate": "2026-03-04T00:00:00-07:00",
+   "superOffPeak": 0.0,
+   "shoulder": 0.0,
+   "offPeak": 81.0,
+   "onPeak": 21.0,
+   "total": 0.0
+  },
+  {
+   "day": "2026-03-04T07:00:00Z",
+   "date": "2026-03-04T07:00:00Z",
+   "meterReadDate": "2026-03-05T00:00:00-07:00",
+   "superOffPeak": 0.0,
+   "shoulder": 0.0,
+   "offPeak": 82.0,
+   "onPeak": 22.0,
+   "total": 0.0
+  },
+  {
+   "day": "2026-03-05T07:00:00Z",
+   "date": "2026-03-05T07:00:00Z",
+   "meterReadDate": "2026-03-06T00:00:00-07:00",
+   "superOffPeak": 0.0,
+   "shoulder": 0.0,
+   "offPeak": 83.0,
+   "onPeak": 23.0,
+   "total": 0.0
+  },
+  {
+   "day": "2026-03-06T07:00:00Z",
+   "date": "2026-03-06T07:00:00Z",
+   "meterReadDate": "2026-03-07T00:00:00-07:00",
+   "superOffPeak": 0.0,
+   "shoulder": 0.0,
+   "offPeak": 84.0,
+   "onPeak": 24.0,
+   "total": 0.0
+  },
+  {
+   "day": "2026-03-07T07:00:00Z",
+   "date": "2026-03-07T07:00:00Z",
+   "meterReadDate": "2026-03-08T00:00:00-07:00",
+   "superOffPeak": 0.0,
+   "shoulder": 0.0,
+   "offPeak": 85.0,
+   "onPeak": 25.0,
+   "total": 0.0
+  },
+  {
+   "day": "2026-03-08T07:00:00Z",
+   "date": "2026-03-08T07:00:00Z",
+   "meterReadDate": "2026-03-09T00:00:00-07:00",
+   "superOffPeak": 0.0,
+   "shoulder": 0.0,
+   "offPeak": 86.0,
+   "onPeak": 26.0,
+   "total": 0.0
+  }
+ ],
+ "dailyGenerationList": [
+  {
+   "day": "2026-03-02T07:00:00Z",
+   "date": "2026-03-02T07:00:00Z",
+   "meterReadDate": "2026-03-03T00:00:00-07:00",
+   "superOffPeak": 0.0,
+   "shoulder": 0.0,
+   "offPeak": 0.0,
+   "onPeak": 25.0,
+   "total": 0.0
+  },
+  {
+   "day": "2026-03-03T07:00:00Z",
+   "date": "2026-03-03T07:00:00Z",
+   "meterReadDate": "2026-03-04T00:00:00-07:00",
+   "superOffPeak": 0.0,
+   "shoulder": 0.0,
+   "offPeak": 0.0,
+   "onPeak": 26.0,
+   "total": 0.0
+  },
+  {
+   "day": "2026-03-04T07:00:00Z",
+   "date": "2026-03-04T07:00:00Z",
+   "meterReadDate": "2026-03-05T00:00:00-07:00",
+   "superOffPeak": 0.0,
+   "shoulder": 0.0,
+   "offPeak": 0.0,
+   "onPeak": 27.0,
+   "total": 0.0
+  },
+  {
+   "day": "2026-03-05T07:00:00Z",
+   "date": "2026-03-05T07:00:00Z",
+   "meterReadDate": "2026-03-06T00:00:00-07:00",
+   "superOffPeak": 0.0,
+   "shoulder": 0.0,
+   "offPeak": 0.0,
+   "onPeak": 28.0,
+   "total": 0.0
+  },
+  {
+   "day": "2026-03-06T07:00:00Z",
+   "date": "2026-03-06T07:00:00Z",
+   "meterReadDate": "2026-03-07T00:00:00-07:00",
+   "superOffPeak": 0.0,
+   "shoulder": 0.0,
+   "offPeak": 0.0,
+   "onPeak": 29.0,
+   "total": 0.0
+  },
+  {
+   "day": "2026-03-07T07:00:00Z",
+   "date": "2026-03-07T07:00:00Z",
+   "meterReadDate": "2026-03-08T00:00:00-07:00",
+   "superOffPeak": 0.0,
+   "shoulder": 0.0,
+   "offPeak": 0.0,
+   "onPeak": 30.0,
+   "total": 0.0
+  },
+  {
+   "day": "2026-03-08T07:00:00Z",
+   "date": "2026-03-08T07:00:00Z",
+   "meterReadDate": "2026-03-09T00:00:00-07:00",
+   "superOffPeak": 0.0,
+   "shoulder": 0.0,
+   "offPeak": 0.0,
+   "onPeak": 31.0,
+   "total": 0.0
+  }
+ ],
+ "dailyReadList": [
+  {
+   "day": "2026-03-02T07:00:00Z",
+   "date": "2026-03-02T07:00:00Z",
+   "meterReadDate": "2026-03-03T00:00:00-07:00",
+   "superOffPeakKwh": 0.0,
+   "shoulderKwh": 0.0,
+   "offPeakKwh": 100.0,
+   "onPeakKwh": 5.0,
+   "totalKwh": 0.0
+  },
+  {
+   "day": "2026-03-03T07:00:00Z",
+   "date": "2026-03-03T07:00:00Z",
+   "meterReadDate": "2026-03-04T00:00:00-07:00",
+   "superOffPeakKwh": 0.0,
+   "shoulderKwh": 0.0,
+   "offPeakKwh": 101.0,
+   "onPeakKwh": 6.0,
+   "totalKwh": 0.0
+  },
+  {
+   "day": "2026-03-04T07:00:00Z",
+   "date": "2026-03-04T07:00:00Z",
+   "meterReadDate": "2026-03-05T00:00:00-07:00",
+   "superOffPeakKwh": 0.0,
+   "shoulderKwh": 0.0,
+   "offPeakKwh": 102.0,
+   "onPeakKwh": 7.0,
+   "totalKwh": 0.0
+  },
+  {
+   "day": "2026-03-05T07:00:00Z",
+   "date": "2026-03-05T07:00:00Z",
+   "meterReadDate": "2026-03-06T00:00:00-07:00",
+   "superOffPeakKwh": 0.0,
+   "shoulderKwh": 0.0,
+   "offPeakKwh": 103.0,
+   "onPeakKwh": 8.0,
+   "totalKwh": 0.0
+  },
+  {
+   "day": "2026-03-06T07:00:00Z",
+   "date": "2026-03-06T07:00:00Z",
+   "meterReadDate": "2026-03-07T00:00:00-07:00",
+   "superOffPeakKwh": 0.0,
+   "shoulderKwh": 0.0,
+   "offPeakKwh": 104.0,
+   "onPeakKwh": 9.0,
+   "totalKwh": 0.0
+  },
+  {
+   "day": "2026-03-07T07:00:00Z",
+   "date": "2026-03-07T07:00:00Z",
+   "meterReadDate": "2026-03-08T00:00:00-07:00",
+   "superOffPeakKwh": 0.0,
+   "shoulderKwh": 0.0,
+   "offPeakKwh": 105.0,
+   "onPeakKwh": 10.0,
+   "totalKwh": 0.0
+  },
+  {
+   "day": "2026-03-08T07:00:00Z",
+   "date": "2026-03-08T07:00:00Z",
+   "meterReadDate": "2026-03-09T00:00:00-07:00",
+   "superOffPeakKwh": 0.0,
+   "shoulderKwh": 0.0,
+   "offPeakKwh": 106.0,
+   "onPeakKwh": 11.0,
+   "totalKwh": 0.0
+  }
+ ],
+ "dailyDemandList": [
+  {
+   "day": "2026-03-02T07:00:00Z",
+   "date": "2026-03-02T07:00:00Z",
+   "meterReadDate": "2026-03-03T00:00:00-07:00",
+   "superOffPeakDemand": 0.0,
+   "shoulderDemand": 0.0,
+   "offPeakDemand": 0.0,
+   "onPeakDemand": 6.0,
+   "totalDemand": 0.0
+  },
+  {
+   "day": "2026-03-03T07:00:00Z",
+   "date": "2026-03-03T07:00:00Z",
+   "meterReadDate": "2026-03-04T00:00:00-07:00",
+   "superOffPeakDemand": 0.0,
+   "shoulderDemand": 0.0,
+   "offPeakDemand": 0.0,
+   "onPeakDemand": 9.0,
+   "totalDemand": 0.0
+  },
+  {
+   "day": "2026-03-04T07:00:00Z",
+   "date": "2026-03-04T07:00:00Z",
+   "meterReadDate": "2026-03-05T00:00:00-07:00",
+   "superOffPeakDemand": 0.0,
+   "shoulderDemand": 0.0,
+   "offPeakDemand": 0.0,
+   "onPeakDemand": 0.0,
+   "totalDemand": 0.0
+  },
+  {
+   "day": "2026-03-05T07:00:00Z",
+   "date": "2026-03-05T07:00:00Z",
+   "meterReadDate": "2026-03-06T00:00:00-07:00",
+   "superOffPeakDemand": 0.0,
+   "shoulderDemand": 0.0,
+   "offPeakDemand": 0.0,
+   "onPeakDemand": 8.0,
+   "totalDemand": 0.0
+  },
+  {
+   "day": "2026-03-06T07:00:00Z",
+   "date": "2026-03-06T07:00:00Z",
+   "meterReadDate": "2026-03-07T00:00:00-07:00",
+   "superOffPeakDemand": 0.0,
+   "shoulderDemand": 0.0,
+   "offPeakDemand": 0.0,
+   "onPeakDemand": 7.0,
+   "totalDemand": 0.0
+  },
+  {
+   "day": "2026-03-07T07:00:00Z",
+   "date": "2026-03-07T07:00:00Z",
+   "meterReadDate": "2026-03-08T00:00:00-07:00",
+   "superOffPeakDemand": 0.0,
+   "shoulderDemand": 0.0,
+   "offPeakDemand": 0.0,
+   "onPeakDemand": 0.0,
+   "totalDemand": 0.0
+  },
+  {
+   "day": "2026-03-08T07:00:00Z",
+   "date": "2026-03-08T07:00:00Z",
+   "meterReadDate": "2026-03-09T00:00:00-07:00",
+   "superOffPeakDemand": 0.0,
+   "shoulderDemand": 0.0,
+   "offPeakDemand": 0.0,
+   "onPeakDemand": 0.0,
+   "totalDemand": 0.0
+  }
+ ],
+ "dailyReceivedList": [],
+ "monthlyCostAndKwhList": [
+  {
+   "month": 3,
+   "year": 2026,
+   "cost": 0.0,
+   "totalKwh": 0
+  }
+ ],
+ "highDemandInfoList": [
+  {
+   "billStartDate": "2026-02-10T00:00:00",
+   "billEndDate": "2026-03-09T00:00:00-07:00",
+   "onPeakHighDemand": 9.0,
+   "onPeakHighDemandDate": "2026-03-03T20:00:00-07:00",
+   "offPeakShoulderHighDemand": 0.0,
+   "highDemand": 0.0
+  },
+  {
+   "billStartDate": "2026-01-10T00:00:00",
+   "billEndDate": "2026-02-09T00:00:00-07:00",
+   "onPeakHighDemand": 4.5,
+   "onPeakHighDemandDate": "2026-01-21T19:30:00-07:00",
+   "offPeakShoulderHighDemand": 0.0,
+   "highDemand": 0.0
+  },
+  {
+   "billStartDate": null,
+   "billEndDate": null,
+   "onPeakHighDemand": 99.0
+  }
+ ]
+}

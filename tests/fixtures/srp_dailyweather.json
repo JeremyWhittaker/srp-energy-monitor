@@ -1,0 +1,44 @@
+[
+ {
+  "weatherDate": "2026-03-02T00:00:00",
+  "high": 70.0,
+  "low": 45.0,
+  "average": 57.0
+ },
+ {
+  "weatherDate": "2026-03-03T00:00:00",
+  "high": 71.0,
+  "low": 46.0,
+  "average": 58.0
+ },
+ {
+  "weatherDate": "2026-03-04T00:00:00",
+  "high": 72.0,
+  "low": 47.0,
+  "average": 59.0
+ },
+ {
+  "weatherDate": "2026-03-05T00:00:00",
+  "high": 73.0,
+  "low": 48.0,
+  "average": 60.0
+ },
+ {
+  "weatherDate": "2026-03-06T00:00:00",
+  "high": 74.0,
+  "low": 49.0,
+  "average": 61.0
+ },
+ {
+  "weatherDate": "2026-03-07T00:00:00",
+  "high": 75.0,
+  "low": 50.0,
+  "average": 62.0
+ },
+ {
+  "weatherDate": "2026-03-08T00:00:00",
+  "high": 76.0,
+  "low": 51.0,
+  "average": 63.0
+ }
+]

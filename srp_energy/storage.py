@@ -26,9 +26,16 @@ from contextlib import contextmanager
 from datetime import date, datetime, time
 from pathlib import Path
 
-from .models import BillProjection, DailyReading, DemandObservation, IntervalReading, Series
+from .models import (
+    BillProjection,
+    CyclePeak,
+    DailyReading,
+    DemandObservation,
+    IntervalReading,
+    Series,
+)
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS daily_reading (
@@ -64,6 +71,19 @@ CREATE TABLE IF NOT EXISTS bill_projection (
     amount_usd  REAL NOT NULL,
     basis       TEXT,
     source      TEXT
+);
+
+-- The demand figure each billing cycle was actually charged on, keyed by the
+-- cycle rather than by an observation time: SRP restates the current cycle's
+-- peak upward as the cycle runs, and re-fetching should correct that row, not
+-- append a second one. Closed cycles never change again.
+CREATE TABLE IF NOT EXISTS cycle_peak (
+    cycle_start            TEXT PRIMARY KEY,
+    cycle_end              TEXT NOT NULL,
+    on_peak_high_demand_kw REAL NOT NULL,
+    occurred_at            TEXT,
+    is_average_demand_rate INTEGER NOT NULL DEFAULT 0,
+    updated_at             TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS meta (
@@ -250,7 +270,59 @@ class Store:
                 ),
             )
 
+    def upsert_cycle_peaks(self, peaks: Iterable[CyclePeak]) -> int:
+        """Insert or update billed demand peaks. Returns the number written."""
+        rows = [
+            (
+                p.cycle_start.isoformat(),
+                p.cycle_end.isoformat(),
+                p.on_peak_high_demand_kw,
+                p.occurred_at.isoformat(timespec="minutes") if p.occurred_at else None,
+                int(p.is_average_demand_rate),
+                datetime.now().isoformat(timespec="seconds"),
+            )
+            for p in peaks
+        ]
+        if not rows:
+            return 0
+        with self.connect() as conn:
+            conn.executemany(
+                """
+                INSERT INTO cycle_peak
+                    (cycle_start, cycle_end, on_peak_high_demand_kw,
+                     occurred_at, is_average_demand_rate, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                -- The open cycle's peak only ever climbs, so a plain
+                -- assignment is right here: the newest fetch is authoritative.
+                -- Unlike the daily tables there is no partial-parse hazard --
+                -- a peak is one number, present or absent.
+                ON CONFLICT(cycle_start) DO UPDATE SET
+                    cycle_end              = excluded.cycle_end,
+                    on_peak_high_demand_kw = excluded.on_peak_high_demand_kw,
+                    occurred_at            = excluded.occurred_at,
+                    is_average_demand_rate = excluded.is_average_demand_rate,
+                    updated_at             = excluded.updated_at
+                """,
+                rows,
+            )
+        return len(rows)
+
     # -------------------------------------------------------------- reading
+
+    def cycle_peaks(self, limit: int | None = None) -> list[CyclePeak]:
+        """Billed demand peaks, newest cycle first."""
+        sql = "SELECT * FROM cycle_peak ORDER BY cycle_start DESC"
+        params: list[object] = []
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+        with self.connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [_row_to_cycle_peak(r) for r in rows]
+
+    def latest_cycle_peak(self) -> CyclePeak | None:
+        peaks = self.cycle_peaks(limit=1)
+        return peaks[0] if peaks else None
 
     def readings(
         self,
@@ -437,6 +509,16 @@ def _row_to_reading(row: sqlite3.Row) -> DailyReading:
         on_peak=row["on_peak"],
         high_temp_f=row["high_temp_f"],
         low_temp_f=row["low_temp_f"],
+    )
+
+
+def _row_to_cycle_peak(row: sqlite3.Row) -> CyclePeak:
+    return CyclePeak(
+        cycle_start=date.fromisoformat(row["cycle_start"]),
+        cycle_end=date.fromisoformat(row["cycle_end"]),
+        on_peak_high_demand_kw=row["on_peak_high_demand_kw"],
+        occurred_at=(datetime.fromisoformat(row["occurred_at"]) if row["occurred_at"] else None),
+        is_average_demand_rate=bool(row["is_average_demand_rate"]),
     )
 
 

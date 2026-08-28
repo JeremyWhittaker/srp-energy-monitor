@@ -170,6 +170,7 @@ srp-energy-monitor show           # print what's in the database
 srp-energy-monitor serve          # REST API + dashboard
 srp-energy-monitor export --format json --series demand
 srp-energy-monitor import ./old-downloads    # backfill from CSVs you already have
+srp-energy-monitor backfill      # years of history from the JSON API, no browser
 
 srp-energy-monitor fetch --no-demand         # CSVs only, skip the live scalars
 srp-energy-monitor fetch --show-browser      # run headed when selectors break
@@ -441,9 +442,10 @@ Stated plainly, because finding these out the hard way is worse.
 - **The headline demand figure means different things on different plans.** See
   [above](#the-demand-number-read-this-one) — check `label`.
 - **Daily exports have no date-range control.** The four daily series give you whatever window
-  the portal shows, typically the last ~31 days. The *hourly* view does accept an explicit
-  range, so that is the way to reach further back. Old exports can be backfilled with
-  `srp-energy-monitor import`.
+  the portal shows, typically the last ~31 days. Three ways further back: the *hourly* view
+  accepts an explicit range, old exports can be replayed with `srp-energy-monitor import`, and
+  `srp-energy-monitor backfill` pulls the account's whole retained daily history — 812 days on
+  the account this was built against — in a single JSON call.
 - **Hourly requests are chunked.** SRP renders every interval in the window before it will
   export, so a multi-month request times out. Long ranges are split into 31-day windows
   automatically.
@@ -532,29 +534,51 @@ work rather than a three-line Dockerfile. It is on the
 | [HA `srp_energy`](https://www.home-assistant.io/integrations/srp_energy/) (built in) | Consumption and cost statistics | No | **No** |
 | [SRPNET-api](https://github.com/Spencer-Sawyer/SRPNET-api) | Daily/hourly usage, rate code | No | **No** |
 | SRP's own portal / Green Button | Manual CSV download, by hand, per chart | — | **No** |
-| **This** | Demand kW, bill projection, usage, generation, net, temperature | **Yes** | **Yes** |
+| **This** | Demand kW, billed cycle peak, bill projection, usage, generation, net, temperature | Optional | **Yes** |
 
 Every other client returns kWh and dollars. None of them exposes the kW demand figure or the
 bill projection — which, on E-15/E-16/E-27, is the number that actually moves your bill.
 
-The honest trade: **they need only Python, this needs Chromium.** If you want a tiny dependency
-to read hourly kWh in a script, `srpenergy` is well maintained and a better fit. If you want the
-demand number, this is currently the only option.
+The honest trade: **they need only Python, and so does this unless you want the browser.** The
+`backfill` backend is stdlib-only; `pip install srp-energy-monitor` with no extras pulls nothing
+at all. Chromium is needed only for `fetch`. If you want a tiny dependency to read hourly kWh in
+a script, `srpenergy` is well maintained and a better fit. If you want the demand number, this is
+currently the only option.
 
-### Why a browser, when there is a private JSON API?
+### Two backends, and why both exist
 
-There is one — `myaccount.srpnet.com/myaccountapi/api/...` — and `srpenergy` calls it directly
-with no browser. It is undocumented, unversioned, unsupported, and can change without notice or
-deprecation. This project instead drives the portal and consumes the **CSV exports SRP itself
-offers you**, which is a contract SRP publishes to its own customers.
+**`fetch`** drives the portal with Playwright and consumes the **CSV exports SRP itself offers
+you** — a contract SRP publishes to its own customers.
 
-That choice also buys the two things the JSON endpoints do not appear to give up: the demand
-card's *caption* (a rendered UI string, and the only way to know whether the figure is a mean or
-a maximum) and the bill projection.
+**`backfill`** uses the private JSON API at `myaccount.srpnet.com/myaccountapi/api/...` — the same
+undocumented, unversioned endpoints `srpenergy` calls — with no browser at all.
 
-It costs a Chromium download, and it is the reason there is no Docker image or Home Assistant
-component yet. A future `SRP_BACKEND=api` that uses the private endpoints for the bulk series
-and keeps the browser only for the two scraped scalars would be a very welcome contribution.
+Earlier versions of this README argued the browser was necessary because the demand card's
+*caption* and the bill projection were rendered UI with no JSON equivalent. **That was wrong.**
+`isAverageDemandRate` is a boolean stating which quantity the plan bills, `payments/billprojection`
+returns the projection as a field, and `demandList` carries 48 half-hourly kW readings a day that
+no public client parses. The billed demand charge is recoverable exactly: `max(onPeakDemand)` over
+a cycle matched SRP's own figure to the interval — 12.7 kW at 2026-08-18 19:30.
+
+So the honest reason to keep both is not capability, it is **failure mode**. A markup change
+breaks the scraper; a field rename breaks the JSON client; a Cloudflare mood breaks whichever one
+you are holding. Neither can break the parser or the history already collected.
+
+What each is better at:
+
+| | `fetch` (browser) | `backfill` (JSON) |
+|---|---|---|
+| Daily history reach | ~31 days, whatever the portal shows | **812 days in one call** |
+| Hourly history reach | date-picker range, chunked | at least back to 2024-08 |
+| Billed cycle peak + timestamp | not available | **yes** (`highDemandInfoList`) |
+| Demand figure on an *average* plan | scraped exactly | reconstructed, ±0.05 kW |
+| Install cost | Chromium download | none — stdlib only |
+| Blocked by Cloudflare | rarely | sometimes, unpredictably |
+
+Two things to know before using the JSON path. Requests wider than **31 days silently truncate**
+to the most recent month with a 200 and no warning, so ranges are chunked automatically. And SRP's
+list names do not match its own CSV series names — the list called `hourlyUsageList` is *net*
+metered energy, not consumption. See [CLAUDE.md](CLAUDE.md) for the full mapping.
 
 ---
 

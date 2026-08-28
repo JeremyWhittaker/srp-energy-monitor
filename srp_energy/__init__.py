@@ -9,6 +9,7 @@ Playwright. The scraper lives in ``srp_energy.client`` and is imported lazily.
 
 from .models import (
     BillProjection,
+    CyclePeak,
     DailyReading,
     DemandObservation,
     IntervalReading,
@@ -28,6 +29,7 @@ __version__ = "1.1.0"
 __all__ = [
     # models
     "BillProjection",
+    "CyclePeak",
     "DailyReading",
     "DemandObservation",
     "IntervalReading",

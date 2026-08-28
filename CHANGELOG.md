@@ -6,6 +6,38 @@ Notable changes to this project. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+- **A second, browser-free backend** (`srp_energy.jsonapi`, `srp-energy-monitor backfill`) over
+  SRP's private JSON API. Stdlib only — the base install still declares no dependencies, and
+  Chromium is now needed for `fetch` alone. It reaches **812 days** of daily history in one call
+  against ~31 from the portal export, and hourly data back to at least 2024-08.
+- **Billed cycle peaks** (`cycle_peak` table, schema v5, `CyclePeak` model). SRP's
+  `highDemandInfoList` gives the single highest on-peak half hour of each billing cycle with the
+  timestamp it happened — the figure the demand charge is actually computed from, which nothing
+  in this project previously stored. Verified against SRP's own number: 12.7 kW at
+  2026-08-18 19:30.
+- `SRP_ACCOUNT_ID` setting, required by the JSON backend only. The browser backend reads the
+  account from the signed-in session and ignores it.
+
+### Fixed
+- **The README's central argument was wrong.** It claimed the browser was necessary because the
+  demand card's caption and the bill projection were rendered UI with no JSON equivalent. Both
+  are JSON fields (`isAverageDemandRate`, `payments/billprojection`), and `demandList` carries
+  48 half-hourly kW readings a day that no public client parses. Rewritten as a comparison of
+  failure modes, which is the real reason to keep both paths.
+
+### Notes for anyone building on the JSON path
+- Requests wider than **31 days truncate silently** — HTTP 200, most recent month only, no
+  warning. `chunk_date_range` guards every range; a naive wide request produces a backfill that
+  looks complete and is not.
+- **SRP's list names do not match its own CSV series names.** `hourlyUsageList` is *net* metered
+  energy, not consumption; consumption is `hourlyConsumptionList`. Anything summing the former
+  and calling it usage reports a different quantity than the bill's kWh line. Full mapping in
+  `CLAUDE.md`.
+- A **403 is not an authentication failure**. Within one hour on one network, `requests` and
+  `curl` were refused where stdlib `urllib` was not. `AccessBlocked` reports this as a transport
+  problem rather than sending people to check a password that was never wrong.
+
 ### Fixed (documentation)
 - The README claimed SRP has "no API". It has no *documented* API, but there is a private JSON
   endpoint behind the portal that other clients call without a browser. Corrected, with an

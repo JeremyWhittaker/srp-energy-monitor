@@ -61,14 +61,67 @@ reviewing a change here, these are the shapes of mistake to look for.
 
 - **There is a private JSON API** at `myaccount.srpnet.com/myaccountapi/api/...`
   that the `srpenergy` PyPI package calls with no browser at all. It is
-  undocumented and unversioned. We drive the portal instead because the CSV
-  export is a contract SRP publishes to its customers, and because the demand
-  card's caption and the bill projection are rendered UI, not JSON fields.
-  A hybrid backend (JSON for the bulk series, browser for the two scalars)
-  is the obvious future direction if the browser dependency ever hurts.
-  Unverified and worth an afternoon: the hourly JSON response carries a
-  `demandList` field that no public client parses -- if it is populated on a
-  demand-plan account, most of this could drop Playwright.
+  undocumented and unversioned. `jsonapi.py` is now a second backend over it;
+  the portal scraper stays because the CSV export is a contract SRP publishes
+  to its customers, and because the two paths fail differently -- markup
+  changes break one, a field rename breaks the other.
+
+  The old note here said the `demandList` question was "unverified and worth an
+  afternoon". It is answered, and the answer was better than hoped:
+
+  - `demandList` **is** populated on a demand-plan account -- 48 half-hourly kW
+    rows a day, in the very response `srpenergy` already receives and discards
+    on the line `hourly_usage_list = data["hourlyUsageList"]`.
+  - `max(onPeakDemand)` over a billing cycle equals the billed demand charge
+    exactly. Checked against SRP's own `highDemandInfoList`: 12.7 kW at
+    2026-08-18T19:30, both figures agreeing to the interval.
+  - The bill projection is a JSON field too (`payments/billprojection`), and
+    `isAverageDemandRate` is a boolean, so **neither of the two "rendered UI
+    only" values actually requires a browser.** That was the load-bearing claim
+    in the README's "why a browser" section and it did not survive contact with
+    the API.
+  - Daily history reaches back **812 days** in one call, against ~31 from the
+    portal export, and hourly reaches back at least to 2024-08.
+
+- **Three JSON traps, all of which fail quietly rather than loudly:**
+
+  1. **Ranges wider than ~31 days truncate silently.** `usage/hourlydetail`
+     answers a two-year request with HTTP 200 and the most recent month. No
+     error, no warning, no indication anything was dropped. `chunk_date_range`
+     exists solely for this; never call `hourly_detail_window` directly across
+     a wide range.
+  2. **SRP's list names do not match its own CSV series names.** Established by
+     fetching both paths for the same days and diffing every value:
+
+     | CSV series | JSON daily list | JSON hourly list |
+     |---|---|---|
+     | `usage` | `dailyConsumptionList` | `hourlyConsumptionList` |
+     | `generation` | `dailyGenerationList` | `hourlyGenerationList` |
+     | `net` | `dailyReadList` | **`hourlyUsageList`** |
+     | `demand` | `dailyDemandList` | `demandList` |
+
+     The list called "usage" is *net* metered energy. Anything summing
+     `hourlyUsageList` and calling it consumption -- Home Assistant's built-in
+     `srp_energy` integration does exactly this -- reports a different quantity
+     than the bill's kWh line. On this account the two differ by ~8 kWh/day.
+  3. **Without the `x-xsrf-token` header every usage endpoint returns 403**,
+     which looks identical to the Cloudflare block. Fetch
+     `login/antiforgerytoken` after `login/authorize` and echo the cookie back.
+
+- **A 403 is not an auth failure and not reliably a property of the host.**
+  Within one hour on one network: `requests` refused, `curl` refused, stdlib
+  `urllib` succeeded, and a second host accepted all three. Treat it as "not
+  this time, from here" -- retry, change machine, or fall back to the browser.
+  `AccessBlocked` exists so this never gets misreported as bad credentials.
+
+- **The average-vs-maximum problem has a clean answer on this path.**
+  `isAverageDemandRate` states which quantity the plan bills. On a peak plan
+  the billed figure is `highDemandInfoList.onPeakHighDemand` directly. On an
+  average plan SRP publishes no field for it, and it is reconstructed as the
+  mean of `dailyDemandList` over the cycle's **weekdays** -- including weekend
+  zeros halves the answer. Reconstruction gave 5.62 kW against the portal's
+  printed 5.60; the residual is daily figures being published to one decimal.
+  Prefer the scraped figure when you have both.
 - **Cloudflare fronts the portal.** A default Playwright browser gets "Access
   Denied" with a Ray ID before SRP serves any markup. `USER_AGENT` and
   `_STEALTH_INIT_SCRIPT` in `client.py` exist solely to get past that. If

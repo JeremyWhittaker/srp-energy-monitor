@@ -81,6 +81,9 @@ class Settings:
 
     srp_username: str = ""
     srp_password: str = ""
+    # Only the JSON backend needs this: the portal infers the account from
+    # the session, but every myaccountapi endpoint takes it as a parameter.
+    srp_account_id: str = ""
 
     data_dir: Path = field(default_factory=lambda: Path("./data"))
     downloads_dir: Path = field(default_factory=lambda: Path("./data/downloads"))
@@ -108,6 +111,7 @@ class Settings:
         return cls(
             srp_username=os.getenv("SRP_USERNAME", ""),
             srp_password=os.getenv("SRP_PASSWORD", ""),
+            srp_account_id=os.getenv("SRP_ACCOUNT_ID", ""),
             data_dir=data_dir,
             downloads_dir=Path(
                 os.getenv("SRP_DOWNLOADS_DIR", str(data_dir / "downloads"))

@@ -9,7 +9,13 @@ from datetime import date, datetime, timedelta
 
 import pytest
 
-from srp_energy.models import DailyReading, DemandObservation, IntervalReading, Series
+from srp_energy.models import (
+    CyclePeak,
+    DailyReading,
+    DemandObservation,
+    IntervalReading,
+    Series,
+)
 from srp_energy.storage import Store
 
 
@@ -204,3 +210,62 @@ def test_null_refetch_does_not_erase_stored_intervals(tmp_path):
     )
 
     assert store.intervals(series=Series.USAGE)[0].off_peak == 4.8
+
+
+def peak(start_day: int, kw: float, **kwargs) -> CyclePeak:
+    return CyclePeak(
+        cycle_start=date(2026, start_day // 100, start_day % 100),
+        cycle_end=date(2026, start_day // 100, start_day % 100) + timedelta(days=29),
+        on_peak_high_demand_kw=kw,
+        **kwargs,
+    )
+
+
+def test_cycle_peak_round_trips(store):
+    store.upsert_cycle_peaks(
+        [peak(610, 6.9, occurred_at=datetime(2026, 6, 23, 19, 30), is_average_demand_rate=True)]
+    )
+    stored = store.latest_cycle_peak()
+
+    assert stored.on_peak_high_demand_kw == 6.9
+    assert stored.occurred_at == datetime(2026, 6, 23, 19, 30)
+    assert stored.is_average_demand_rate is True
+
+
+def test_open_cycle_peak_is_corrected_not_duplicated(store):
+    """The current cycle's peak climbs as the cycle runs.
+
+    Re-fetching mid-cycle must overwrite that row. Appending instead would
+    leave the highest figure buried behind whichever row was written last.
+    """
+    store.upsert_cycle_peaks([peak(810, 8.7, occurred_at=datetime(2026, 8, 17, 19, 30))])
+    store.upsert_cycle_peaks([peak(810, 12.7, occurred_at=datetime(2026, 8, 18, 19, 30))])
+
+    peaks = store.cycle_peaks()
+    assert len(peaks) == 1, "one row per billing cycle"
+    assert peaks[0].on_peak_high_demand_kw == 12.7
+    assert peaks[0].occurred_at == datetime(2026, 8, 18, 19, 30)
+
+
+def test_cycle_peaks_come_back_newest_first(store):
+    store.upsert_cycle_peaks([peak(610, 6.9), peak(810, 12.7), peak(710, 12.6)])
+
+    assert [p.on_peak_high_demand_kw for p in store.cycle_peaks()] == [12.7, 12.6, 6.9]
+
+
+def test_cycle_peak_survives_a_reopened_database(tmp_path):
+    """Schema v5 adds a table to an existing database without disturbing it."""
+    path = tmp_path / "upgrade.db"
+    first = Store(path)
+    first.upsert_readings([reading(1)])
+    first.upsert_cycle_peaks([peak(810, 12.7)])
+
+    reopened = Store(path)
+    assert reopened.latest_cycle_peak().on_peak_high_demand_kw == 12.7
+    assert len(reopened.readings()) == 1
+
+
+def test_no_peaks_is_not_an_error(store):
+    assert store.upsert_cycle_peaks([]) == 0
+    assert store.cycle_peaks() == []
+    assert store.latest_cycle_peak() is None

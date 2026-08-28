@@ -5,6 +5,7 @@ srp-energy-monitor serve         # run the REST API + dashboard
 srp-energy-monitor show          # print what's in the database
 srp-energy-monitor export        # dump readings as CSV or JSON
 srp-energy-monitor import        # backfill from previously downloaded CSVs
+srp-energy-monitor backfill      # pull history from the JSON API, no browser
 """
 
 from __future__ import annotations
@@ -128,6 +129,36 @@ def build_parser() -> argparse.ArgumentParser:
 
     imp = sub.add_parser("import", help="Backfill from a folder of SRP CSV exports.")
     imp.add_argument("directory", help="Folder containing srp_<series>_<timestamp>.csv files.")
+
+    backfill = sub.add_parser(
+        "backfill",
+        help="Pull history from SRP's JSON API with no browser.",
+        description=(
+            "Fetches daily history, billed cycle peaks and the bill projection, "
+            "plus interval data across an arbitrary range. Needs SRP_ACCOUNT_ID. "
+            "Interval requests are chunked automatically: SRP silently truncates "
+            "anything wider than 31 days to its most recent month."
+        ),
+    )
+    backfill.add_argument(
+        "--start",
+        type=_iso_date,
+        help="First interval date, YYYY-MM-DD. Omit to skip interval data entirely.",
+    )
+    backfill.add_argument(
+        "--end", type=_iso_date, help="Last interval date, YYYY-MM-DD. Default: yesterday."
+    )
+    backfill.add_argument(
+        "--series",
+        action="append",
+        choices=[s.value for s in Series],
+        help="Which series to store; repeatable. Default: all four.",
+    )
+    backfill.add_argument(
+        "--no-daily",
+        action="store_true",
+        help="Skip the daily history and fetch only intervals.",
+    )
 
     return parser
 
@@ -351,6 +382,84 @@ def _cmd_hourly(args: argparse.Namespace, settings: Settings, store: Store) -> i
     return 0 if result.ok else 1
 
 
+def _cmd_backfill(args: argparse.Namespace, settings: Settings, store: Store) -> int:
+    """Pull history through the JSON backend instead of the browser.
+
+    Kept separate from ``fetch`` rather than folded in behind a flag: the two
+    backends have different failure modes and different credentials
+    requirements, and a run that silently fell back from one to the other
+    would make "why is this number different" much harder to answer.
+    """
+    from .jsonapi import (
+        AccessBlocked,
+        SRPApiError,
+        SRPJsonClient,
+        parse_bill_projection,
+        parse_cycle_peaks,
+        parse_daily_usage_detail,
+        parse_demand_observation,
+    )
+
+    username, password = settings.require_credentials()
+    if not settings.srp_account_id:
+        print(
+            "SRP_ACCOUNT_ID is not set. The JSON backend needs your 9-digit "
+            "account number; the browser backend (`fetch`) does not.",
+            file=sys.stderr,
+        )
+        return 2
+
+    series = [Series.parse(s) for s in args.series] if args.series else None
+
+    try:
+        with SRPJsonClient(username, password, settings.srp_account_id) as srp:
+            if not args.no_daily:
+                daily_payload = srp.daily_usage_detail()
+                try:
+                    weather = srp.daily_weather()
+                except SRPApiError:
+                    # Temperature is decoration on every row; losing it is not
+                    # a reason to lose the readings.
+                    logging.getLogger(__name__).warning("weather unavailable; continuing")
+                    weather = {}
+
+                readings = parse_daily_usage_detail(daily_payload, weather, series)
+                print(f"Stored {store.upsert_readings(readings)} daily readings")
+
+                peaks = parse_cycle_peaks(daily_payload)
+                print(f"Stored {store.upsert_cycle_peaks(peaks)} billed cycle peaks")
+                if peaks:
+                    latest = peaks[-1]
+                    print(
+                        f"  latest cycle {latest.cycle_start} .. {latest.cycle_end}: "
+                        f"{latest.on_peak_high_demand_kw} kW at {latest.occurred_at}"
+                    )
+
+                observation = parse_demand_observation(daily_payload)
+                if observation:
+                    store.record_demand(observation)
+                    print(f"{observation.label}: {observation.demand_kw:.2f} kW")
+
+                projection = parse_bill_projection(srp.bill_projection())
+                if projection:
+                    store.record_bill_projection(projection)
+                    print(f"Projected bill: ${projection.amount_usd:.2f}")
+
+            if args.start:
+                end = args.end or date.today() - timedelta(days=1)
+                intervals = srp.hourly_detail(args.start, end, series)
+                written = store.upsert_intervals(intervals)
+                print(f"Stored {written} intervals for {args.start} .. {end}")
+    except AccessBlocked as exc:
+        print(f"{exc}", file=sys.stderr)
+        return 1
+    except SRPApiError as exc:
+        print(f"SRP JSON API error: {exc}", file=sys.stderr)
+        return 1
+
+    return 0
+
+
 _COMMANDS = {
     "fetch": _cmd_fetch,
     "hourly": _cmd_hourly,
@@ -358,6 +467,7 @@ _COMMANDS = {
     "show": _cmd_show,
     "export": _cmd_export,
     "import": _cmd_import,
+    "backfill": _cmd_backfill,
 }
 
 
