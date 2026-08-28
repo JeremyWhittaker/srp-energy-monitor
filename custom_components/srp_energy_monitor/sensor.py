@@ -105,6 +105,16 @@ SENSORS: tuple[SRPSensorDescription, ...] = (
     # accumulating, so summing them into long-term statistics would produce
     # nonsense. The real history lives in the external statistics the
     # coordinator writes.
+    #
+    # Generation is the one that needs its name qualified. SRP's
+    # ``dailyConsumptionList`` and ``dailyReadList`` agree with the hourly
+    # lists to within a rounding step, but ``dailyGenerationList`` does not:
+    # it leaves the off-peak column at zero and reports only the on-peak leg,
+    # which is why it reads 0 on weekends while the array is plainly still
+    # producing. Measured on 2026-08-27: 21 kWh here against 84.5 kWh summed
+    # from ``hourlyGenerationList``. Total production is the
+    # ``energy_generation`` statistic; this entity is the on-peak leg SRP
+    # nets against on-peak consumption, and it is named for that.
     SRPSensorDescription(
         key="daily_consumption",
         translation_key="daily_consumption",

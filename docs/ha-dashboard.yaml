@@ -1,0 +1,540 @@
+# Example Home Assistant dashboard for the SRP Energy Monitor integration.
+#
+# Paste this into a dashboard in raw-configuration-editor mode
+# (dashboard -> pencil -> three dots -> "Raw configuration editor").
+#
+# Replace 123456789 with your own SRP account number everywhere it appears --
+# it is part of both the entity ids and the statistic ids.
+#
+# The JuiceBox helpers referenced on the "Daily Shape" view are input_booleans
+# from a separate project; delete that section if you do not have them.
+#
+# The figures quoted in the markdown cards were measured on one account over
+# the 2026-08-10 -> 08-28 cycle. Yours will differ; the cards are worth
+# rewriting once you can see your own.
+views:
+- title: Bill Cycle
+  path: cycle
+  icon: mdi:cash-clock
+  type: sections
+  max_columns: 2
+  badges:
+  - type: entity
+    entity: sensor.srp_account_123456789_bill_projection
+    name: Projected
+  - type: entity
+    entity: sensor.srp_account_123456789_current_demand
+    name: Billed demand
+  - type: entity
+    entity: sensor.srp_account_123456789_billed_cycle_peak
+    name: Worst half hour
+  sections:
+  - type: grid
+    cards:
+    - type: heading
+      heading: What this cycle costs
+      heading_style: title
+      icon: mdi:currency-usd
+    - type: tile
+      entity: sensor.srp_account_123456789_bill_projection
+      vertical: true
+      name: Projected bill
+      grid_options:
+        columns: 6
+        rows: 2
+    - type: tile
+      entity: sensor.srp_account_123456789_current_demand
+      vertical: true
+      name: Billed demand (E-15 average)
+      grid_options:
+        columns: 6
+        rows: 2
+    - type: markdown
+      content: '### The two demand numbers
+
+
+        You are on **E-15, Customer Generation Average Demand**. SRP does **not** bill your single worst
+        half hour — it bills the **mean of each weekday''s on-peak maximum** across the cycle.
+
+
+        | | Now | What it is |
+
+        |---|---|---|
+
+        | **Billed demand** | **{{ states(''sensor.srp_account_123456789_current_demand'') }} kW** | mean
+        of the daily on-peak maxima — *this is what sets the charge* |
+
+        | **Worst half hour** | **{{ states(''sensor.srp_account_123456789_billed_cycle_peak'') }} kW**
+        | the single highest 30 min — *what E-27 would bill* |
+
+
+        The gap between those two is the whole reason they are separate entities: reporting either as
+        the other misstates the bill. Each carries a `quantity` attribute saying which one it is.
+
+
+        {% set p = state_attr(''sensor.srp_account_123456789_billed_cycle_peak'', ''occurred_at'') %}{%
+        if p %}The worst half hour landed **{{ as_timestamp(p) | timestamp_custom(''%A %-d %B at %-I:%M
+        %p'') }}**. {% endif %}Cycle **{{ state_attr(''sensor.srp_account_123456789_billed_cycle_peak'',
+        ''cycle_start'') }}** → **{{ state_attr(''sensor.srp_account_123456789_billed_cycle_peak'', ''cycle_end'')
+        }}**.'
+      grid_options:
+        columns: full
+  - type: grid
+    cards:
+    - type: heading
+      heading: Demand
+      heading_style: title
+      icon: mdi:flash-alert
+    - type: tile
+      entity: sensor.srp_account_123456789_billed_cycle_peak
+      vertical: true
+      name: Worst half hour this cycle
+      grid_options:
+        columns: 6
+        rows: 2
+    - type: gauge
+      entity: sensor.srp_account_123456789_current_demand
+      name: Billed demand
+      min: 0
+      max: 15
+      needle: true
+      severity:
+        green: 0
+        yellow: 6
+        red: 9
+      grid_options:
+        columns: 6
+        rows: 3
+    - type: statistics-graph
+      title: Daily on-peak maximum — the values that get averaged
+      entities:
+      - srp_energy_monitor:123456789_demand_kw
+      stat_types:
+      - max
+      period: day
+      days_to_show: 45
+      chart_type: line
+      hide_legend: false
+      grid_options:
+        columns: full
+        rows: 6
+    - type: markdown
+      content: Each bar is one day's highest half hour. On E-15 the **weekday** bars are averaged to produce
+        the billed demand; weekend and holiday days carry no on-peak demand and are excluded — averaging
+        their zeros in would halve the answer.
+      grid_options:
+        columns: full
+  - type: grid
+    cards:
+    - type: heading
+      heading: Energy
+      heading_style: title
+      icon: mdi:home-lightning-bolt
+    - type: statistic
+      entity: srp_energy_monitor:123456789_energy_consumption
+      name: Grid draw, this month
+      stat_type: change
+      period:
+        calendar:
+          period: month
+      grid_options:
+        columns: 6
+    - type: statistic
+      entity: srp_energy_monitor:123456789_energy_generation
+      name: Generation, this month
+      stat_type: change
+      period:
+        calendar:
+          period: month
+      grid_options:
+        columns: 6
+    - type: statistic
+      entity: srp_energy_monitor:123456789_energy_consumption
+      name: Grid draw, last 30 days
+      stat_type: change
+      period:
+        rolling_window:
+          duration:
+            days: 30
+      grid_options:
+        columns: 6
+    - type: statistic
+      entity: srp_energy_monitor:123456789_energy_generation
+      name: Generation, last 30 days
+      stat_type: change
+      period:
+        rolling_window:
+          duration:
+            days: 30
+      grid_options:
+        columns: 6
+    - type: heading
+      heading: Last settled day
+      heading_style: subtitle
+    - type: tile
+      entity: sensor.srp_account_123456789_daily_consumption
+      vertical: true
+      name: Consumption
+    - type: tile
+      entity: sensor.srp_account_123456789_daily_generation
+      vertical: true
+      name: On-peak generation
+    - type: tile
+      entity: sensor.srp_account_123456789_daily_net_energy
+      vertical: true
+      name: Metered read
+    - type: markdown
+      content: '**Two generation numbers, and they are not the same quantity.** The tile above is SRP''s
+        `dailyGenerationList`, which leaves its off-peak column at zero and reports only the **on-peak**
+        leg — the part netted against on-peak consumption. It reads 0 on weekends, when there is no on-peak
+        period at all. **Total production** is the `Generation` statistic, summed from the hourly list:
+        on 2026-08-27 that was **84.5 kWh** against the tile''s **21 kWh**.
+
+
+        Consumption and metered read carry no such split — their daily and hourly lists agree to within
+        a rounding step.'
+      grid_options:
+        columns: full
+    - type: markdown
+      content: '**SRP publishes a day late.** Every figure here is as-of the date in each entity''s `data_through`
+        attribute — the meter settles overnight, so today is never available. The integration polls every
+        four hours, which is as often as there is anything new to fetch.'
+      grid_options:
+        columns: full
+  - type: grid
+    cards:
+    - type: heading
+      heading: Metered read
+      heading_style: title
+      icon: mdi:counter
+    - type: statistics-graph
+      title: Net of generation, per day
+      entities:
+      - srp_energy_monitor:123456789_energy_net
+      stat_types:
+      - change
+      period: day
+      days_to_show: 60
+      chart_type: bar
+      hide_legend: false
+      grid_options:
+        columns: full
+        rows: 6
+    - type: markdown
+      content: '**Metered read** is SRP''s `hourlyUsageList` — the series Home Assistant''s built-in integration
+        reported as *usage*. Its on-peak component is consumption minus generation, verified exact on
+        every settled day of this cycle, so on a sunny weekday it goes **negative**: this cycle it reached
+        −9 kWh.
+
+
+        It is published here under its own name, alongside consumption and generation rather than in place
+        of them.'
+      grid_options:
+        columns: full
+- title: Daily Shape
+  path: shape
+  icon: mdi:chart-bell-curve
+  type: sections
+  max_columns: 2
+  sections:
+  - type: grid
+    cards:
+    - type: heading
+      heading: Where the demand charge is set
+      heading_style: title
+      icon: mdi:clock-alert-outline
+    - type: statistics-graph
+      title: Half-hourly demand, last 7 days
+      entities:
+      - srp_energy_monitor:123456789_demand_kw
+      stat_types:
+      - max
+      period: hour
+      days_to_show: 7
+      chart_type: line
+      hide_legend: false
+      grid_options:
+        columns: full
+        rows: 6
+    - type: markdown
+      content: '### The 7:30 pm problem
+
+
+        Of the ten days this cycle that drew any on-peak demand at all, **nine peaked in the 19:30–20:00
+        half hour** — the last thirty minutes of the on-peak window, after the sun is down and the house
+        is still cooling. The tenth (Aug 27) peaked at 18:30.
+
+
+        **What flattening that one half hour would be worth**, computed over the 2026-08-10 → 08-28 cycle:
+
+
+        | | Now | Without 19:30–20:00 |
+
+        |---|---|---|
+
+        | Billed demand (E-15) | 6.11 kW | **2.61 kW** — a 57% cut |
+
+        | Worst half hour (E-27) | 12.70 kW | 12.50 kW — barely moves |
+
+
+        The asymmetry is the point. Because E-15 averages *every weekday''s* maximum, shaving one recurring
+        half hour moves the bill a long way. E-27 bills the single worst interval, and Aug 27''s 18:30
+        peak would survive untouched — so the same fix would be worth almost nothing on that plan.'
+      grid_options:
+        columns: full
+  - type: grid
+    cards:
+    - type: heading
+      heading: Hourly energy
+      heading_style: title
+      icon: mdi:transmission-tower
+    - type: statistics-graph
+      title: Grid draw vs generation, last 7 days
+      entities:
+      - srp_energy_monitor:123456789_energy_consumption
+      - srp_energy_monitor:123456789_energy_generation
+      stat_types:
+      - change
+      period: hour
+      days_to_show: 7
+      chart_type: bar
+      hide_legend: false
+      grid_options:
+        columns: full
+        rows: 6
+    - type: heading
+      heading: On-peak window
+      heading_style: subtitle
+    - type: tile
+      entity: input_boolean.juicebox_srp_on_peak
+      vertical: true
+      name: On-peak now
+    - type: tile
+      entity: input_boolean.juicebox_srp_holiday
+      vertical: true
+      name: SRP holiday
+    - type: tile
+      entity: input_boolean.juicebox_srp_schedule_valid
+      vertical: true
+      name: Schedule valid
+    - type: history-graph
+      hours_to_show: 72
+      grid_options:
+        columns: full
+        rows: 3
+      entities:
+      - entity: input_boolean.juicebox_srp_on_peak
+        name: On-peak
+      - entity: input_boolean.juicebox_srp_holiday
+        name: Holiday
+    - type: markdown
+      content: These helpers come from your **JuiceBox** project, not from SRP — they are the schedule
+        the charger obeys. Summer on-peak is 14:00–20:00 on weekdays; SRP holidays are off-peak all day.
+      grid_options:
+        columns: full
+- title: History
+  path: history
+  icon: mdi:history
+  type: sections
+  max_columns: 2
+  sections:
+  - type: grid
+    cards:
+    - type: heading
+      heading: Two years of it
+      heading_style: title
+      icon: mdi:database-clock
+    - type: markdown
+      content: 'The integration backfilled **every interval SRP still retains** on first setup — hourly
+        energy from **2024-07-29**, and both generation and half-hourly demand from **2025-05-04**, when
+        the array came online and the account moved to a demand plan. That is everything SRP still holds.
+
+
+        Requests longer than about 31 days come back truncated to the most recent month with an HTTP 200
+        and no warning, so the backfill chunks every range before it goes near the wire.'
+      grid_options:
+        columns: full
+    - type: statistics-graph
+      title: Grid draw per day
+      entities:
+      - srp_energy_monitor:123456789_energy_consumption
+      stat_types:
+      - change
+      period: day
+      days_to_show: 760
+      chart_type: bar
+      hide_legend: false
+      grid_options:
+        columns: full
+        rows: 6
+    - type: statistics-graph
+      title: Generation per day
+      entities:
+      - srp_energy_monitor:123456789_energy_generation
+      stat_types:
+      - change
+      period: day
+      days_to_show: 760
+      chart_type: bar
+      hide_legend: false
+      grid_options:
+        columns: full
+        rows: 6
+  - type: grid
+    cards:
+    - type: heading
+      heading: Demand over time
+      heading_style: title
+      icon: mdi:chart-line
+    - type: statistics-graph
+      title: Daily on-peak maximum, full history
+      entities:
+      - srp_energy_monitor:123456789_demand_kw
+      stat_types:
+      - max
+      - mean
+      period: day
+      days_to_show: 460
+      chart_type: line
+      hide_legend: false
+      grid_options:
+        columns: full
+        rows: 6
+    - type: heading
+      heading: Monthly totals
+      heading_style: subtitle
+    - type: statistic
+      entity: srp_energy_monitor:123456789_energy_consumption
+      name: Grid draw this month
+      stat_type: change
+      period:
+        calendar:
+          period: month
+      grid_options:
+        columns: 6
+    - type: statistic
+      entity: srp_energy_monitor:123456789_energy_generation
+      name: Generation this month
+      stat_type: change
+      period:
+        calendar:
+          period: month
+      grid_options:
+        columns: 6
+    - type: statistic
+      entity: srp_energy_monitor:123456789_energy_consumption
+      name: Grid draw, 30 days
+      stat_type: change
+      period:
+        rolling_window:
+          duration:
+            days: 30
+      grid_options:
+        columns: 6
+    - type: statistic
+      entity: srp_energy_monitor:123456789_energy_generation
+      name: Generation, 30 days
+      stat_type: change
+      period:
+        rolling_window:
+          duration:
+            days: 30
+      grid_options:
+        columns: 6
+- title: What Changed
+  path: changed
+  icon: mdi:swap-horizontal
+  type: sections
+  max_columns: 2
+  sections:
+  - type: grid
+    cards:
+    - type: heading
+      heading: Replacing the built-in integration
+      heading_style: title
+      icon: mdi:package-variant
+    - type: markdown
+      content: 'This dashboard used to run on Home Assistant''s built-in `srp_energy` integration. It
+        has been removed and replaced with **`srp_energy_monitor`**, a custom integration built from the
+        [srp-energy-monitor](https://github.com/JeremyWhittaker/srp-energy-monitor) project.
+
+
+        | | Built-in `srp_energy` | `srp_energy_monitor` |
+
+        |---|---|---|
+
+        | Entities | 1 | 6 |
+
+        | Demand (kW) | — | current + billed cycle peak, with timestamp |
+
+        | Bill projection | — | yes |
+
+        | Generation / export | — | yes |
+
+        | On/off-peak split | — | yes |
+
+        | Cost | 2015 rate table, hard-coded | not published — a wrong number is worse than none |
+
+        | History on setup | ~30 days | every interval SRP retains (2 years here) |
+
+        | Dependencies | `srpenergy` (PyPI) | none — stdlib + HA''s own aiohttp |
+
+        '
+      grid_options:
+        columns: full
+  - type: grid
+    cards:
+    - type: heading
+      heading: Two things worth knowing
+      heading_style: title
+      icon: mdi:alert-decagram-outline
+    - type: markdown
+      content: '### The old sensor was mislabelled
+
+
+        `sensor.srp_energy_home_energy_usage` reported SRP''s `hourlyUsageList`, and called it *usage*.
+        That series is the **metered read**: its on-peak component is consumption minus generation, verified
+        exact on every settled day of this cycle. On a solar account it goes **negative** — this cycle
+        it hit −9 kWh on 2026-08-19 — which no quantity called "usage" should ever do.
+
+
+        Here that series is published as **net energy**, separately from consumption and generation, so
+        nothing has to guess which one it is looking at.'
+      grid_options:
+        columns: full
+    - type: markdown
+      content: '### Where these numbers come from
+
+
+        SRP publishes no documented API, but the My Account portal''s own front-end calls a private JSON
+        one, and the integration calls it directly — no browser on this Pi, and `"requirements": []`,
+        so nothing is installed at setup time and nothing can fail to build a wheel on HAOS.
+
+
+        Two things it has to work around, both measured rather than assumed:
+
+
+        - **Long requests truncate silently.** Asking `usage/hourlydetail` for two years returns HTTP
+        200 carrying only the most recent 31 days. Every range is chunked before it goes near the wire.
+
+        - **Cloudflare fronts the API** and its verdict varies by host, client and moment. A 403 there
+        is not a bad password, and the integration says so rather than sending you to retype one.
+
+
+        Polling is every four hours — SRP settles the previous day overnight and publishes nothing in
+        between, so asking more often buys nothing.'
+      grid_options:
+        columns: full
+    - type: markdown
+      content: '### The cost statistic was synthetic
+
+
+        The built-in integration multiplied usage by a **rate table hard-coded in 2015** and wrote the
+        result as a cost statistic — $730 of history that never matched a bill. It was cleared with the
+        cutover rather than carried over.
+
+
+        What replaces it is SRP''s own **bill projection**, taken straight from the account: the number
+        SRP itself expects to charge.'
+      grid_options:
+        columns: full

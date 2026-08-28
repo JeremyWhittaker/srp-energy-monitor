@@ -135,6 +135,28 @@ def test_demand_off_peak_is_dropped_in_both(srp_api, daily):
     assert all(r.off_peak is None for r in ours)
 
 
+def test_interval_demand_off_peak_is_dropped_in_both(srp_api, hourly):
+    """The same rule on the interval path, where it once was not applied.
+
+    ``demandList`` carries both legs, and off-peak demand on a solar account
+    runs roughly double the on-peak figure. Anything that collapsed the pair to
+    a single number -- the Home Assistant coordinator does exactly that when it
+    builds the hourly max -- would publish an unbilled 25 kW as the demand for
+    a cycle whose billed peak was 12.7 kW. Dropping the leg at the parser makes
+    that unrepresentable rather than merely unlikely.
+    """
+    fixture_has_off_peak = any(row.get("offPeakDemand") for row in hourly.get("demandList") or [])
+    assert fixture_has_off_peak, "fixture must exercise the leg being dropped"
+
+    theirs = srp_api.parse_intervals(hourly, ["demand"])
+    ours = jsonapi.parse_hourly_detail(hourly, series=[Series.DEMAND])
+    assert theirs and ours
+    assert all(i.off_peak is None for i in theirs)
+    assert all(r.off_peak is None for r in ours)
+    # the on-peak leg must survive untouched
+    assert any(i.on_peak for i in theirs)
+
+
 def test_component_declares_no_requirements():
     """HAOS is musl; a dependency without a matching wheel breaks setup.
 

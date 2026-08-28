@@ -25,12 +25,28 @@ Notable changes to this project. Format loosely follows
   standard library and the aiohttp Home Assistant already ships, so nothing can fail to install
   on HAOS.
 - `GET /api/v1/cycle-peaks`, and `latest_cycle_peak` on `/api/v1/summary`.
+- `docs/ha-dashboard.yaml` — the four-view Home Assistant dashboard built against the
+  integration, ready to paste into a raw configuration editor.
 - The dashboard is redesigned around the demand figure rather than treating it as one of five
   equal cards: billing-cycle progress, the billed peak shown beside the cycle average with the
   distinction spelled out, a threshold line and highlighted bar marking the peak on the demand
   chart, and a light/dark toggle. Still one file, still no external resources.
 
 ### Fixed
+- **The daily generation entity is named for what it actually holds.** SRP's
+  `dailyGenerationList` populates only its on-peak column; the off-peak one is always zero, so
+  the figure reads 0 on weekends while the array is plainly still producing. Summing the two
+  columns and calling the result "daily generation" understated 2026-08-27 as 21 kWh against
+  84.5 kWh summed from `hourlyGenerationList`. Renamed to **Daily on-peak generation**; total
+  production is the `energy_generation` statistic, which was already correct. Consumption and
+  net needed no change -- their daily and hourly lists agree to within a rounding step.
+- **Interval demand no longer carries its off-peak leg.** The daily parser already dropped it —
+  SRP publishes an off-peak demand figure but bills only the on-peak one — while the interval
+  parser kept both, and the Home Assistant coordinator then stored `max(off_peak, on_peak)` as
+  the demand statistic. On a solar account off-peak demand runs roughly double the on-peak
+  figure, so the chart reported an unbilled **25.3 kW** for a cycle whose billed peak was
+  **12.7 kW**. Both parsers now drop the leg, which makes the mistake unrepresentable rather
+  than merely unlikely, and a parity test holds the two paths together.
 - **The README's central argument was wrong.** It claimed the browser was necessary because the
   demand card's caption and the bill projection were rendered UI with no JSON equivalent. Both
   are JSON fields (`isAverageDemandRate`, `payments/billprojection`), and `demandList` carries

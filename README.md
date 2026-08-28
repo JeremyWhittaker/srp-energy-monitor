@@ -360,12 +360,33 @@ Six entities:
 | Current demand | kW | What the portal prints for the cycle in progress — a mean on E-15/E-16, a maximum on E-27. The `is_average` attribute says which. |
 | Billed cycle peak | kW | The single highest on-peak half hour of the cycle, with the timestamp it happened |
 | Bill projection | USD | SRP's own projection for the cycle |
-| Daily consumption / generation / net | kWh | The most recent settled day |
+| Daily consumption / net | kWh | The most recent settled day |
+| Daily on-peak generation | kWh | The most recent settled day, **on-peak only** — see below |
 
 It also writes **long-term statistics**, back-filled on first setup: hourly kWh for consumption,
-generation and net, plus half-hourly demand stored as an hourly mean with min and max. The `max`
-column is the one worth charting — it preserves the highest half hour of each hour, which is the
-granularity demand is billed on.
+generation and net, plus half-hourly **on-peak** demand stored as an hourly mean with min and max.
+The `max` column is the one worth charting — it preserves the highest half hour of each hour,
+which is the granularity demand is billed on. On the account this was built against the backfill
+reached **2024-07-29** for energy and **2025-05-04** for generation and demand, which is
+everything SRP still retains.
+
+Only the on-peak leg of demand is stored. SRP publishes an off-peak figure too, and on a solar
+account it is the larger of the two by a wide margin — 25.3 kW against a 12.7 kW billed peak over
+one measured cycle — so keeping both would produce a chart that looks like demand while showing a
+number no bill has ever contained.
+
+> [!IMPORTANT]
+> **Generation has two numbers and they are not the same quantity.** SRP's `dailyGenerationList`
+> leaves its off-peak column at zero and reports only the on-peak leg — the part netted against
+> on-peak consumption — so it reads 0 on weekends, when there is no on-peak period. Total
+> production lives in the hourly list, and that is what the `energy_generation` statistic sums.
+> Measured on 2026-08-27: **21 kWh** from the daily list against **84.5 kWh** from the hourly one.
+> The daily entity is named *on-peak generation* for exactly this reason. Consumption and net
+> carry no such split — their daily and hourly lists agree to within a rounding step.
+
+A four-view dashboard built against these entities is in
+[`docs/ha-dashboard.yaml`](docs/ha-dashboard.yaml) — paste it into a dashboard's raw configuration
+editor and replace the account number.
 
 > [!NOTE]
 > This is **not** Home Assistant's built-in `srp_energy` integration, and it uses a different

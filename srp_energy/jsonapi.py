@@ -246,11 +246,18 @@ def parse_hourly_detail(
             start = _as_naive_datetime(row.get("date") or row.get("hour"))
             if start is None:
                 continue
+            off = _as_float(row.get(off_field))
+            # Same rule the daily parser applies: SRP publishes an off-peak
+            # demand figure but bills only the on-peak one. Keeping it here
+            # would be worse than useless -- off-peak demand on this account
+            # runs roughly twice the on-peak figure, so anything that collapsed
+            # the pair to one number would report an unbilled 25 kW where the
+            # billed peak was 12.7.
             out.append(
                 IntervalReading(
                     series=name,
                     interval_start=start,
-                    off_peak=_as_float(row.get(off_field)),
+                    off_peak=None if name is Series.DEMAND else off,
                     on_peak=_as_float(row.get(on_field)),
                 )
             )

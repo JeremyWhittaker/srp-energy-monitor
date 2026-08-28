@@ -19,10 +19,11 @@ CONFIGURATION_URL = "https://myaccount.srpnet.com/power/myaccount/usage"
 # and leaves room for a late settle without hammering someone else's site.
 UPDATE_INTERVAL = timedelta(hours=4)
 
-# How far back a first-time backfill reaches. SRP served complete hourly data
-# from 2024-08 on the account this was built against; half-hourly demand only
-# appears from roughly mid-2025. Asking for more than exists is harmless -- the
-# windows simply come back empty -- so this is generous on purpose.
+# How far back a first-time backfill reaches. Measured on the account this was
+# built against: hourly energy from 2024-07-29, and both generation and
+# half-hourly demand from 2025-05-04, when the array came online and the
+# account moved to a demand plan. Asking for more than exists is harmless --
+# the windows simply come back empty -- so this is generous on purpose.
 BACKFILL_DAYS = 760
 
 # External statistic ids. The recorder validates these against

@@ -31,7 +31,7 @@
       "billed_cycle_peak": { "name": "Billed cycle peak" },
       "bill_projection": { "name": "Bill projection" },
       "daily_consumption": { "name": "Daily consumption" },
-      "daily_generation": { "name": "Daily generation" },
+      "daily_generation": { "name": "Daily on-peak generation" },
       "daily_net": { "name": "Daily net energy" }
     }
   }

@@ -185,7 +185,15 @@ class SRPCoordinator(DataUpdateCoordinator[SRPData]):
         await self._async_write_demand(intervals)
 
     async def _async_statistics_start(self) -> date:
-        """Resume from the last recorded hour, or reach back for a first run."""
+        """Resume from the last recorded hour, or reach back for a first run.
+
+        Consumption is the anchor because it is the one series every account
+        has: generation and demand are empty on a plan without solar, so
+        keying off the oldest series would refetch two years on every poll.
+        The cost is that clearing a *single* statistic will not refill it --
+        the fetch window has already moved on. Clear all four to force a
+        rebuild.
+        """
         last = await get_instance(self.hass).async_add_executor_job(
             get_last_statistics,
             self.hass,
@@ -248,18 +256,27 @@ class SRPCoordinator(DataUpdateCoordinator[SRPData]):
         LOGGER.debug("wrote %s %s statistics", len(points), statistic_id)
 
     async def _async_write_demand(self, intervals: list[Interval]) -> None:
-        """Write half-hourly kW as an hourly mean/min/max statistic.
+        """Write half-hourly **on-peak** kW as an hourly mean/min/max statistic.
 
         The ``max`` column is the useful one: it preserves the highest half hour
         of each hour, which is the granularity SRP bills demand on. Averaging
         the two half-hours together -- which is all an hourly-resolution source
         can do -- understates the billed peak by however hard load ramped.
+
+        Only the on-peak leg is stored. SRP publishes an off-peak demand figure
+        too, and on a solar account it is the larger of the two by a wide margin
+        -- 25.3 kW against a 12.7 kW billed peak over one measured cycle -- so a
+        statistic that mixed them would look like a demand chart while showing a
+        number no bill has ever contained.
         """
         buckets: dict[datetime, list[float]] = {}
         for row in intervals:
             if row.series != "demand":
                 continue
-            value = max(row.off_peak or 0.0, row.on_peak or 0.0)
+            # On-peak only: that is the leg SRP bills, and the parser
+            # drops the off-peak one for this series precisely so this
+            # cannot silently become max(unbilled, billed).
+            value = row.on_peak or 0.0
             hour = row.start.replace(minute=0, second=0, microsecond=0, tzinfo=PHOENIX)
             buckets.setdefault(hour, []).append(value)
 

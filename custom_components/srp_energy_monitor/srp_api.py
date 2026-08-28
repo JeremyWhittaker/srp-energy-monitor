@@ -196,11 +196,15 @@ def parse_intervals(payload: dict[str, Any], series: list[str] | None = None) ->
             start = _as_datetime(row.get("date") or row.get("hour"))
             if start is None:
                 continue
+            off = _as_float(row.get(off_field))
+            # Off-peak demand is published but never billed -- and on this
+            # account it runs about twice the on-peak figure, so keeping it
+            # invites a statistic that reports 25 kW for a 12.7 kW peak.
             out.append(
                 Interval(
                     series=name,
                     start=start,
-                    off_peak=_as_float(row.get(off_field)),
+                    off_peak=None if name == "demand" else off,
                     on_peak=_as_float(row.get(on_field)),
                 )
             )
