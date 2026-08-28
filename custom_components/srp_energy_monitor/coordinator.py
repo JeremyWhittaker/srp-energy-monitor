@@ -72,6 +72,10 @@ from .srp_api import (
 # forward reference keeps both happy.
 SRPConfigEntry = ConfigEntry["SRPCoordinator"]
 
+# Resolved once at import. get_time_zone() can block on a cache miss, which
+# is safe here only because Home Assistant imports integration modules in an
+# executor -- the default whenever a manifest omits `import_executor`. Do not
+# set `"import_executor": false` in manifest.json without moving this.
 PHOENIX = dt_util.get_time_zone("America/Phoenix")
 
 #: series -> (statistic suffix, friendly name)
@@ -188,7 +192,10 @@ class SRPCoordinator(DataUpdateCoordinator[SRPData]):
             1,
             self.statistic_id(STAT_CONSUMPTION),
             True,
-            {"start"},
+            # Empty on purpose: "start" is not a member of the `types` Literal,
+            # and every returned row carries start/end regardless of what is
+            # asked for. Core's own opower integration does the same here.
+            set(),
         )
         rows = last.get(self.statistic_id(STAT_CONSUMPTION)) if last else None
         if not rows:
@@ -209,7 +216,7 @@ class SRPCoordinator(DataUpdateCoordinator[SRPData]):
         statistic_id = self.statistic_id(suffix)
 
         last = await get_instance(self.hass).async_add_executor_job(
-            get_last_statistics, self.hass, 1, statistic_id, True, {"sum", "start"}
+            get_last_statistics, self.hass, 1, statistic_id, True, {"sum"}
         )
         previous = last.get(statistic_id) if last else None
         running = float(previous[0]["sum"]) if previous else 0.0
