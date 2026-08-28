@@ -384,7 +384,7 @@ number no bill has ever contained.
 > The daily entity is named *on-peak generation* for exactly this reason. Consumption and net
 > carry no such split — their daily and hourly lists agree to within a rounding step.
 
-A four-view dashboard built against these entities is in
+A three-view dashboard built against these entities is in
 [`docs/ha-dashboard.yaml`](docs/ha-dashboard.yaml) — paste it into a dashboard's raw configuration
 editor and replace the account number.
 
