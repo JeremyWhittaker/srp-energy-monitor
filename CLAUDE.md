@@ -73,14 +73,16 @@ reviewing a change here, these are the shapes of mistake to look for.
     rows a day, in the very response `srpenergy` already receives and discards
     on the line `hourly_usage_list = data["hourlyUsageList"]`.
   - `max(onPeakDemand)` over a billing cycle equals the billed demand charge
-    exactly. Checked against SRP's own `highDemandInfoList`: 12.7 kW at
-    2026-08-18T19:30, both figures agreeing to the interval.
+    exactly. Checked against SRP's own `highDemandInfoList`: 12.7 kW in the
+    half hour ending 2026-08-18T20:00, both figures agreeing to the interval.
+    SRP stamps a half hour with the time it ends, so that row is the
+    19:30-20:00 interval and 20:00 is what `occurred_at` reports.
   - The bill projection is a JSON field too (`payments/billprojection`), and
     `isAverageDemandRate` is a boolean, so **neither of the two "rendered UI
     only" values actually requires a browser.** That was the load-bearing claim
     in the README's "why a browser" section and it did not survive contact with
     the API.
-  - Daily history reaches back **812 days** in one call, against ~31 from the
+  - Daily history reaches back **more than 800 days** in one call, against ~31 from the
     portal export, and hourly reaches back at least to 2024-08.
 
 - **Three JSON traps, all of which fail quietly rather than loudly:**

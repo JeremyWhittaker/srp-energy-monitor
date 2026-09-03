@@ -1,0 +1,56 @@
+# NOTE: WorkingDirectory and ExecStart below assume a checkout at
+# ~/projects/srp-energy-monitor (%h/projects/srp-energy-monitor). Edit both
+# paths to match wherever you actually cloned this repo before installing.
+#
+# That checkout needs a virtualenv at .venv with the API extra installed, or
+# ExecStart has nothing to run:
+#
+#     cd ~/projects/srp-energy-monitor
+#     python3 -m venv .venv
+#     .venv/bin/pip install -e '.[api]'
+#
+# Without uvicorn, `serve` prints an install hint and exits 1. The start limit
+# below is what turns that into a unit you can see has failed, rather than one
+# quietly restarting every ten seconds until someone notices.
+[Unit]
+Description=SRP energy dashboard and REST API
+Documentation=https://github.com/JeremyWhittaker/srp-energy-monitor
+# Deliberately no After=/Wants=network-online.target. That target does not
+# exist in a systemd *user* manager -- `systemctl --user status
+# network-online.target` answers "could not be found" -- so the dependency
+# would be inert. It costs nothing that it is missing: the server binds
+# 127.0.0.1 and reads a local SQLite file, so it has nothing to wait for.
+#
+# Give up after five failed starts in five minutes and leave the unit in
+# `failed`, where `systemctl --user status` shows it. The defaults are five
+# starts per ten seconds, which RestartSec=10 can never reach -- so without
+# these two lines a permanently broken install (no venv, no uvicorn, a port
+# already in use) restarts forever and never reports anything wrong.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=%h/projects/srp-energy-monitor
+# WorkingDirectory is also where `serve` looks for .env, which is where the
+# bind address comes from: SRP_HOST and SRP_PORT, defaulting to 127.0.0.1:8000.
+#
+# THE API HAS NO AUTHENTICATION. Anyone who can reach the port can read your
+# whole usage history and POST /api/v1/fetch to make the machine scrape SRP.
+# Leave it on 127.0.0.1. If you want it on the network, put a reverse proxy
+# that does TLS and a login in front of it -- do not set SRP_HOST=0.0.0.0 and
+# call it done.
+ExecStart=%h/projects/srp-energy-monitor/.venv/bin/srp-energy-monitor serve
+# The server should come back if it dies, spaced out rather than spinning.
+#
+# Note what does NOT stop it: `serve` never asks for credentials, and a missing
+# .env is read as an empty one, so with no .env at all the dashboard still
+# starts on 127.0.0.1:8000 and answers /health with
+# "credentials_configured": false. What actually fails a start is a missing or
+# incomplete venv, a non-numeric SRP_PORT, or a port already in use -- all of
+# them permanent until you fix them, which is what the start limit is for.
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

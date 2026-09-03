@@ -10,7 +10,7 @@ That duplication is deliberate and it is guarded: ``tests/test_component_parity.
 runs this module and ``srp_energy.jsonapi`` over the same fixtures and fails if
 they ever disagree about a number. Change one, change both.
 
-The three behaviours worth knowing before editing, all measured against the
+The four behaviours worth knowing before editing, all measured against the
 live API rather than assumed:
 
 * Ranges wider than :data:`HOURLY_MAX_DAYS` come back truncated to the most
@@ -21,6 +21,27 @@ live API rather than assumed:
   exactly like the Cloudflare block.
 * A 403 is not an authentication failure. The same credentials have been
   refused and accepted minutes apart depending on host and HTTP client.
+* **No status code, on any path, is by itself an authentication failure.**
+  This one cost eighteen hours of dead sensors on 2026-09-02. Home Assistant
+  restarted, the first refresh got 401 from ``usage/dailyusagedetail``, the
+  client reported that as a bad password, the coordinator turned it into
+  ``ConfigEntryAuthFailed``, and Home Assistant stopped polling *permanently*
+  while it waited for a reauth the user never saw. The password was
+  byte-for-byte correct the whole time.
+
+  What a 401 from a data endpoint actually means is that the ``.AspNet.MyAccount``
+  session cookie is gone or stale. Proven by calling ``usage/dailyusagedetail``
+  with no session at all: 401 ``{"message":"Authorization has been denied for
+  this request."}`` -- the exact response a genuinely wrong password never
+  produces. A wrong password fails earlier, elsewhere, and in different words:
+  at ``login/authorize``, with 400 ``{"error":"invalid_grant", ...}``.
+
+  So the verdict "the password is wrong" is reached only when SRP says so, in
+  its own words -- ``invalid_grant``, on ``login/authorize``. Everything else
+  is retryable, including an unexplained 400 or 401 from ``login/authorize``
+  itself, which is what a rate limit, a WAF rule, a maintenance window or a
+  temporary lockout looks like. Those heal on their own; a wrongly latched
+  ``ConfigEntryAuthFailed`` does not. See :meth:`SRPClient._raise`.
 """
 
 from __future__ import annotations
@@ -39,6 +60,34 @@ API_BASE = URL("https://myaccount.srpnet.com/myaccountapi/api/")
 HOURLY_MAX_DAYS = 31
 
 REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=90)
+
+#: The one endpoint that checks a username and a password, and therefore the
+#: only path on which a credential verdict can honestly be reached at all. It is
+#: necessary but not sufficient: the body has to carry :data:`_INVALID_GRANT`
+#: too. Everywhere else, and here without those words, a 4xx means something the
+#: user cannot fix by retyping anything.
+LOGIN_PATH = "login/authorize"
+
+#: The second half of the login handshake. It needs no credentials of its own
+#: (it rides the cookie ``login/authorize`` just set), so a failure here is a
+#: broken handshake, never a bad password. Named so :meth:`SRPClient._request`
+#: can refuse to start a re-login in response to a request that *is* a login.
+ANTIFORGERY_PATH = "login/antiforgerytoken"
+
+#: SRP's OAuth-flavoured spelling of "that password is wrong". Present in the
+#: body of the 400 from ``login/authorize`` and nowhere else, which makes it the
+#: definitive signal rather than an inference from a status code -- and so this
+#: module *requires* it before it will blame anybody's password. Observed live:
+#: ``{"error":"invalid_grant","error_description":"The user name or password is
+#: incorrect."}``
+_INVALID_GRANT = "invalid_grant"
+
+#: Indirection over ``asyncio.sleep`` purely so a test can replace the politeness
+#: delay between interval windows without reaching into the stdlib. Patching
+#: ``srp_api.asyncio`` -- which is the real :mod:`asyncio` module, shared with
+#: every other importer in the process -- worked by accident and leaked into
+#: anything else running in the same interpreter.
+_SLEEP = asyncio.sleep
 
 _HEADERS = {
     "User-Agent": (
@@ -68,7 +117,42 @@ class SRPApiError(Exception):
 
 
 class SRPAuthError(SRPApiError):
-    """SRP rejected the credentials. This one really is the password."""
+    """SRP rejected the credentials. This one really is the password.
+
+    Raised *only* when :data:`LOGIN_PATH` -- the one request in the whole API
+    that submits a username and a password -- comes back 400 or 401 **and** the
+    body carries :data:`_INVALID_GRANT`, SRP's own words for a bad password.
+
+    The narrowness is the point. The coordinator escalates this to
+    ``ConfigEntryAuthFailed``, which stops polling until a human retypes the
+    password, so anything raised here must be genuinely unfixable by retrying.
+    Widen this class and you re-create the outage described at the top of this
+    module.
+    """
+
+
+class SRPSessionExpired(SRPApiError):
+    """The session cookie is gone or stale. Log in again and try once more.
+
+    :meth:`SRPClient._request` repairs this for a data endpoint, so most of
+    these never reach a caller. Some do, and the docstring used to claim
+    otherwise. ``login/antiforgerytoken`` is the leg that produces them: it
+    carries no credentials, so a 401 there is not a login failure and is not
+    special-cased, and :meth:`SRPClient._login` runs on
+    :meth:`SRPClient._send`, which has no retry. Two ways out from there:
+
+    * :meth:`SRPClient._ensure_session` calls :meth:`SRPClient._login` before
+      :meth:`SRPClient._request` is ever involved, so one escapes straight to
+      the public method's caller.
+    * the repair inside :meth:`SRPClient._request` calls
+      :meth:`SRPClient._login` too, and does not wrap it, so one escapes that
+      method as well.
+
+    Which is why this is a subclass of :class:`SRPApiError` and deliberately
+    *not* of :class:`SRPAuthError`: whatever route it escapes by, the
+    coordinator maps it to ``UpdateFailed`` and Home Assistant retries on the
+    next poll. Failing retryably is the whole point.
+    """
 
 
 class SRPAccessBlocked(SRPApiError):
@@ -303,7 +387,18 @@ def parse_projection(payload: dict[str, Any]) -> float | None:
 
 
 class SRPClient:
-    """Async JSON client using Home Assistant's shared aiohttp session."""
+    """Async JSON client over an aiohttp session this integration owns.
+
+    The session must not be Home Assistant's shared one. See the comment in
+    ``coordinator.py`` where it is built: SRP's whole notion of "logged in" is a
+    single cookie, and putting that cookie in a jar every other integration also
+    writes to is how it went missing in the first place.
+
+    Concurrency is one lock, held by the public methods for the length of a
+    logical operation. ``asyncio.Lock`` is **not** reentrant, so everything
+    below the public surface -- ``_request``, ``login``, ``_send`` -- runs
+    lock-free and assumes the caller already holds it.
+    """
 
     def __init__(
         self, session: aiohttp.ClientSession, username: str, password: str, account_id: str
@@ -318,6 +413,68 @@ class SRPClient:
     async def _request(
         self, path: str, *, data: dict[str, str] | None = None, params: dict[str, str] | None = None
     ) -> Any:
+        """One API call, repairing an expired session at most once.
+
+        Why the retry lives here rather than in the coordinator: a lost session
+        cookie is invisible from the outside. The caller asked for daily usage,
+        not for a login, and re-logging in is a repair the caller should never
+        have to know about. Doing it a layer up would mean teaching every call
+        site the difference between "SRP said no" and "our cookie went stale".
+
+        Two structural properties keep the failure modes here -- a deadlock and
+        an infinite loop -- out of reach, and neither is a runtime check:
+
+        * **No recursion.** The retry calls :meth:`_send` directly, and
+          :meth:`_login` does too. Nothing on the re-login path can re-enter
+          this method, so "at most once" is a property of the shape of the code
+          rather than of a counter someone has to remember to decrement.
+        * **No second acquire of** ``self._lock``. The public methods hold the
+          lock across their whole operation and it is not reentrant, so a
+          re-login triggered from in here must not reach for it. It does not:
+          :meth:`_login` is lock-free, asserts as much, and is called from
+          :meth:`validate` only while the lock is already held.
+
+        The ``path in (LOGIN_PATH, ANTIFORGERY_PATH)`` branch below is a
+        consequence of the first property rather than an enforcer of it: because
+        :meth:`_login` goes through :meth:`_send`, no login request ever reaches
+        this method today, and that branch is currently unreachable. It is kept
+        as belt and braces for a future caller who routes a login through here
+        by mistake -- it would be a cheap thing to delete and an expensive thing
+        to have to rediscover -- but it is not what makes the code safe, and no
+        test can cover it while it stays unreachable.
+
+        A second consecutive 401 is reported as a plain :class:`SRPApiError`.
+        That is a retryable failure -- Home Assistant backs off and tries again
+        on the next poll -- and specifically not a :class:`SRPAuthError`, which
+        would suspend polling until a human intervened.
+        """
+        try:
+            return await self._send(path, data=data, params=params)
+        except SRPSessionExpired:
+            # Belt and braces, unreachable today: _login uses _send, so no login
+            # request arrives here. If one ever did, it could not repair itself
+            # by logging in again -- that recurses -- so let it out. It is
+            # retryable as it stands. See this method's docstring.
+            if path in (LOGIN_PATH, ANTIFORGERY_PATH):
+                raise
+
+        # The cookie is stale or gone. Drop the cached token so nothing can use
+        # it, establish a fresh session, and replay the one request that failed.
+        self._xsrf = None
+        await self._login()
+        try:
+            return await self._send(path, data=data, params=params)
+        except SRPSessionExpired as exc:
+            raise SRPApiError(
+                f"{path} returned 401 again immediately after a successful "
+                "re-login. The session is not sticking -- this is SRP's side or "
+                "the network's, not the password. Home Assistant will retry."
+            ) from exc
+
+    async def _send(
+        self, path: str, *, data: dict[str, str] | None = None, params: dict[str, str] | None = None
+    ) -> Any:
+        """A single HTTP round trip with no retry and no lock of its own."""
         headers = dict(_HEADERS)
         if self._xsrf:
             headers["x-xsrf-token"] = self._xsrf
@@ -344,26 +501,110 @@ class SRPClient:
 
     @staticmethod
     def _raise(status: int, body: str, path: str) -> None:
-        if status == 403 and "access denied" in body.lower():
+        """Turn an HTTP error into the narrowest exception that fits.
+
+        Ordered from most specific to least, and the ordering matters:
+
+        1. 403 carrying "access denied" -- Cloudflare, not SRP. Unchanged.
+        2. 400 or 401 from :data:`LOGIN_PATH` **whose body says invalid_grant**
+           -- the password, in SRP's own words, on the only request that
+           submits one. The single non-retryable verdict this client issues.
+        3. 400 or 401 from :data:`LOGIN_PATH` *without* those words -- a login
+           refused for a reason nobody has identified. Retryable, deliberately.
+        4. 401 from anywhere else -- an expired session, repaired upstream.
+        5. everything else: a 400 from a data endpoint (a malformed request
+           rather than a rejected identity), a 5xx, a 404.
+
+        Rule 2 used to be ``path == LOGIN_PATH and status in (400, 401)``, with
+        no look at the body. That was the last route by which a *transient*
+        failure could kill the integration permanently, and it is a live route,
+        not a hypothetical: on a fresh Home Assistant start ``_xsrf`` is None, so
+        :meth:`_ensure_session` goes straight to :meth:`_login` with no data
+        request at all. A rate limit, a WAF rule, a maintenance window or a
+        temporary lockout answering that login with a bare 400 or 401 became
+        ``SRPAuthError`` -> ``ConfigEntryAuthFailed`` -> polling stopped for
+        good. That is the exact shape of the 2026-09-02 outage, one layer down.
+
+        Requiring the ``invalid_grant`` body costs nothing in coverage: a
+        genuinely wrong password *always* produces it, so the real case is still
+        caught. The previous author's stated worry was the opposite risk --
+        retrying a wrong password forever, which is how accounts get locked --
+        and that worry does not survive this gate, because a wrong password is
+        still classified as a wrong password on the first try and never retried.
+        What retries now is only an **unrecognised** login failure, which is the
+        safer default of the two: the cost asymmetry is stark. A false "auth
+        failed" cost eighteen hours of dead sensors and needed a human to
+        notice. A false "retry" costs one extra request every four hours.
+        """
+        lowered = body.lower()
+        if status == 403 and "access denied" in lowered:
             raise SRPAccessBlocked(
                 f"Cloudflare refused {path} (403). Your credentials are not the "
                 "problem -- this varies by host, client and moment. It usually "
                 "clears on its own."
             )
-        if status in (400, 401):
-            raise SRPAuthError(f"SRP rejected the credentials on {path}")
+        if path == LOGIN_PATH and status in (400, 401):
+            if _INVALID_GRANT in lowered:
+                raise SRPAuthError(
+                    f"SRP says the username or password is incorrect (invalid_grant) on {path}"
+                )
+            # Refused, but not in the words SRP uses for a bad password. Handled
+            # here rather than falling through to the 401 branch below purely so
+            # the message is true: a login request has no session to expire, and
+            # saying it does would send the next person debugging this down the
+            # wrong path. The class is what matters, and it is retryable.
+            raise SRPApiError(
+                f"{path} refused the login with HTTP {status} and no invalid_grant "
+                f"in the body: {body[:200]}. A rate limit, a WAF rule, a "
+                "maintenance window or a temporary lockout all look like this. "
+                "Not a credential failure -- Home Assistant will retry."
+            )
+        if status == 401:
+            raise SRPSessionExpired(
+                f"{path} answered 401: the SRP session has expired or was "
+                "evicted. This is not a credential failure."
+            )
         raise SRPApiError(f"{path} failed: HTTP {status}: {body[:200]}")
 
-    async def login(self) -> None:
+    async def _login(self) -> None:
         """Authenticate, then capture the anti-forgery token.
 
         Both steps are required: without the second, every usage endpoint
         answers 403 in a way that looks like an access problem.
+
+        Private, and named so. It used to be ``login()``, which read like a
+        public entry point while carrying a contract only its docstring
+        mentioned -- the sort of mismatch that gets discovered by a deadlock.
+        The public surface for "prove these credentials work" is
+        :meth:`validate`; everything under it, this included, is lock-free.
+
+        Two contracts, and the type system enforces neither:
+
+        * **The caller holds** ``self._lock``. This method never takes it. That
+          is what lets :meth:`_request` re-login mid-operation without
+          deadlocking on a lock the public method already owns. The name now
+          says so, and the assertion below actually checks it -- a convention
+          is not a guard, and the failure it would otherwise cause is a hang
+          rather than a traceback, which is the worst kind to debug.
+        * **It calls** :meth:`_send`, **never** :meth:`_request`. A 401 during
+          login must not trigger a login; going through ``_request`` would set
+          up exactly that loop.
         """
-        await self._request(
-            "login/authorize", data={"username": self._username, "password": self._password}
+        # asyncio.Lock cannot report *who* holds it, so this cannot distinguish
+        # our own caller from another task. It does not need to: the mistake
+        # worth catching is calling this from outside the public surface
+        # entirely, and that leaves the lock unheld.
+        assert self._lock.locked(), (
+            "SRPClient._login requires the caller to hold self._lock; it is "
+            "lock-free by design so _request can re-login mid-operation"
         )
-        await self._request("login/antiforgerytoken")
+        # Clear first, so a login that dies between the two calls leaves the
+        # client in the "no session" state rather than holding a token whose
+        # cookie no longer exists -- which is the state that used to persist
+        # forever, because _ensure_session only ever logs in when this is None.
+        self._xsrf = None
+        await self._send(LOGIN_PATH, data={"username": self._username, "password": self._password})
+        await self._send(ANTIFORGERY_PATH)
         cookies = self._session.cookie_jar.filter_cookies(API_BASE)
         token = cookies.get("xsrf-token")
         if token is None or not token.value:
@@ -373,13 +614,31 @@ class SRPClient:
         self._xsrf = URL(token.value).human_repr() if "%" in token.value else token.value
 
     async def _ensure_session(self) -> None:
+        """Log in if we have never logged in, or if the last session was dropped.
+
+        This is only half the story, and the weaker half. It cannot tell a live
+        session from a dead one -- SRP does not say, and probing costs a request
+        -- so it optimistically reuses whatever token it has. The other half is
+        :meth:`_request`, which notices the 401 that proves the token is dead and
+        clears it. Before that existed, a single evicted cookie was terminal:
+        ``_xsrf`` stayed set, this method stayed satisfied, and every subsequent
+        call 401'd forever.
+
+        Assumes ``self._lock`` is held, like everything else below the public
+        surface.
+        """
         if self._xsrf is None:
-            await self.login()
+            await self._login()
 
     async def validate(self) -> bool:
-        """Round-trip the credentials. Used by the config flow."""
+        """Round-trip the credentials. The public entry point for a login.
+
+        Used by the config flow, for both first-time setup and the reauth
+        prompt. Takes the lock, which is what :meth:`_login` requires and will
+        not do for itself.
+        """
         async with self._lock:
-            await self.login()
+            await self._login()
             return True
 
     async def daily_detail(self) -> dict[str, Any]:
@@ -413,5 +672,5 @@ class SRPClient:
                 )
                 out.extend(parse_intervals(payload))
                 # A backfill is ~25 windows against someone else's site.
-                await asyncio.sleep(0.5)
+                await _SLEEP(0.5)
         return out

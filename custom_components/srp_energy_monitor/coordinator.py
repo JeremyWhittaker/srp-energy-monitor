@@ -17,6 +17,11 @@ because kW is a rate, not a quantity. That also means the hourly `max` column
 holds the highest half-hour of each hour, which is the granularity the demand
 charge is actually billed on -- an hourly average would understate the real
 peak by however hard load ramped inside the hour.
+
+One rule governs failure handling here, and it was learned the hard way: **only
+a wrong password may raise ConfigEntryAuthFailed.** Everything else has to fail
+retryably. See the comment on that branch in :meth:`SRPCoordinator._async_update_data`,
+and the module docstring of ``srp_api.py`` for the outage that established it.
 """
 
 from __future__ import annotations
@@ -38,7 +43,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME, UnitOfEnergy, UnitOfPower
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 from homeassistant.util.unit_conversion import EnergyConverter, PowerConverter
@@ -105,8 +110,29 @@ class SRPCoordinator(DataUpdateCoordinator[SRPData]):
 
     def __init__(self, hass: HomeAssistant, entry: SRPConfigEntry) -> None:
         self.account_id: str = entry.data[CONF_ACCOUNT_ID]
+        # async_create_clientsession, not async_get_clientsession. The latter
+        # hands out Home Assistant's *shared* session, and a shared session
+        # means a shared cookie jar. SRP's entire notion of being logged in is
+        # one cookie, .AspNet.MyAccount, so parking it in a jar that every other
+        # integration also writes to made the integration's authentication state
+        # something it did not control. A private session is one where the only
+        # thing that can evict our cookie is SRP.
+        #
+        # Lifecycle, checked against the 2026.8 source rather than assumed
+        # (homeassistant/helpers/aiohttp_client.py): with the default
+        # auto_cleanup=True this registers _async_register_clientsession_shutdown,
+        # which reads the config_entries.current_entry ContextVar and, when it is
+        # set, calls entry.async_on_unload(...) to detach the session on unload
+        # -- plus a listener for EVENT_HOMEASSISTANT_CLOSE. That ContextVar is
+        # set by ConfigEntry.async_setup for the duration of the awaited
+        # async_setup_entry, and this constructor runs inside it, in the same
+        # task, so the registration lands on our entry. Reloading the entry
+        # therefore starts a genuinely fresh session and jar; unloading leaves
+        # nothing behind. Nothing to close by hand here -- and note the helper
+        # detaches rather than closes, because the underlying connector belongs
+        # to Home Assistant and is shared. Closing it would be a bug.
         self._client = SRPClient(
-            async_get_clientsession(hass),
+            async_create_clientsession(hass),
             entry.data[CONF_USERNAME],
             entry.data[CONF_PASSWORD],
             self.account_id,
@@ -134,11 +160,26 @@ class SRPCoordinator(DataUpdateCoordinator[SRPData]):
         except SRPAuthError as err:
             # The one failure that really is the credentials -- surfacing it as
             # a reauth prompt beats retrying a wrong password every four hours.
+            #
+            # Weigh this branch carefully before widening it. Raised out of
+            # async_config_entry_first_refresh, ConfigEntryAuthFailed aborts
+            # setup and opens a reauth flow, and Home Assistant then stops
+            # polling *permanently* -- no backoff, no retry, six sensors at
+            # `unavailable` until somebody notices and clicks something. That is
+            # the correct response to a password that is genuinely wrong and a
+            # catastrophic one to a blip. srp_api.py now raises SRPAuthError
+            # only for a 400/401 from login/authorize, the sole request that
+            # submits a password; a 401 from a data endpoint is an expired
+            # session, is repaired in the client, and arrives here (if at all)
+            # as a retryable SRPApiError instead.
             raise ConfigEntryAuthFailed(str(err)) from err
         except SRPAccessBlocked as err:
             # Transient and not the user's fault; UpdateFailed retries quietly.
             raise UpdateFailed(str(err)) from err
         except SRPApiError as err:
+            # Everything else, SRPSessionExpired included: retry on the next
+            # poll. Sensors go stale for a few hours at worst and heal without
+            # anyone being asked to do anything.
             raise UpdateFailed(f"Error talking to SRP: {err}") from err
 
         peaks = parse_cycle_peaks(daily_payload)
