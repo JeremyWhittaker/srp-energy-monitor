@@ -9,8 +9,8 @@ The **statistics** need history, and this is where the integration earns its
 keep. SRP publishes interval data going back years, so a first run backfills
 roughly two years of hourly energy and however much half-hourly demand the
 account has (demand appears from around mid-2025 on the account this was built
-against). After that only the days since the last recorded statistic are
-fetched.
+against). Later refreshes revisit seven settled days as well as any collection
+gap, because SRP can revise intervals it already published.
 
 Demand is stored as a *mean* statistic with min and max rather than a sum,
 because kW is a rate, not a quantity. That also means the hourly `max` column
@@ -26,6 +26,7 @@ and the module docstring of ``srp_api.py`` for the outage that established it.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
@@ -89,6 +90,102 @@ _ENERGY_STATS = {
     "generation": (STAT_GENERATION, "generation"),
     "net": (STAT_NET, "net energy"),
 }
+
+RESTATEMENT_DAYS = 7
+_HOUR = timedelta(hours=1)
+
+
+def _energy_values(
+    series: str, intervals: list[Interval], cutoff: datetime
+) -> dict[datetime, float]:
+    """Accept unambiguous completed hourly intervals, without inventing zeros."""
+    values: dict[datetime, float] = {}
+    for row in intervals:
+        if row.series != series:
+            continue
+        start = row.start
+        start = start.replace(tzinfo=PHOENIX) if start.tzinfo is None else start.astimezone(PHOENIX)
+        if start.minute or start.second or start.microsecond or start >= cutoff:
+            raise SRPApiError("energy history contains a non-hourly or unsettled/future interval")
+        if row.off_peak is None and row.on_peak is None:
+            raise SRPApiError("energy history contains an interval without a reading")
+        try:
+            value = float(row.total)
+        except (TypeError, ValueError) as err:
+            raise SRPApiError("energy history contains a non-numeric reading") from err
+        if not math.isfinite(value):
+            raise SRPApiError("energy history contains a non-finite reading")
+        if start in values and values[start] != value:
+            raise SRPApiError("energy history contains conflicting duplicate hours")
+        values[start] = value
+    return values
+
+
+def _rebuild_energy_statistics(
+    values: dict[datetime, float], previous: list[dict], cutoff: datetime
+) -> list[StatisticData]:
+    """Recompute an entire affected tail from a known preceding cumulative sum.
+
+    HA's external import upserts exact starts, but does not repair later sums.
+    Retain old states when a response omits an already recorded hour; never
+    replace a missing hour with zero or discard a later recorded tail.
+    """
+    first = min(values)
+    stored: dict[datetime, tuple[float | None, float]] = {}
+    for row in previous:
+        try:
+            start = datetime.fromtimestamp(row["start"], PHOENIX)
+            total = float(row["sum"])
+            state = float(row["state"]) if row.get("state") is not None else None
+        except (KeyError, TypeError, ValueError, OverflowError) as err:
+            raise SRPApiError("recorded energy history has an invalid baseline/state") from err
+        if start.minute or start.second or start.microsecond or start >= cutoff:
+            raise SRPApiError(
+                "recorded energy history contains non-hourly or unsettled/future rows"
+            )
+        if not math.isfinite(total) or (state is not None and not math.isfinite(state)):
+            raise SRPApiError("recorded energy history contains a non-finite baseline/state")
+        if start in stored:
+            raise SRPApiError("recorded energy history contains duplicate hours")
+        stored[start] = (state, total)
+
+    preceding = [start for start in stored if start < first]
+    baseline_at = max(preceding) if preceding else None
+    if baseline_at is not None:
+        running = stored[baseline_at][1]
+    elif not stored:
+        running = 0.0
+    else:
+        # A genuinely new series may start inside the fetched window. Only its
+        # original zero-origin first point establishes a baseline without a
+        # preceding row. A truncated/imported history with an unknown offset
+        # needs explicit recovery rather than silently resetting that offset.
+        earliest = min(stored)
+        state, total = stored[earliest]
+        if state is None or not math.isclose(total, state, rel_tol=0, abs_tol=1e-7):
+            raise SRPApiError("no known pre-window energy baseline; targeted recovery is required")
+        running = 0.0
+
+    merged = {}
+    for start, (state, _total) in stored.items():
+        if start >= first:
+            if state is None:
+                raise SRPApiError("recorded energy tail has an hour without a state")
+            merged[start] = state
+    merged.update(values)
+    points = []
+    last = baseline_at
+    for start in sorted(merged):
+        if last is not None and start != last + _HOUR:
+            raise SRPApiError(
+                "energy replay has an unfilled hourly gap; previous statistics preserved"
+            )
+        running += merged[start]
+        if not math.isfinite(running):
+            raise SRPApiError("energy replay cumulative total is not finite")
+        points.append(StatisticData(start=start, state=merged[start], sum=running))
+        last = start
+    return points
 
 
 @dataclass(slots=True)
@@ -209,9 +306,9 @@ class SRPCoordinator(DataUpdateCoordinator[SRPData]):
     # ------------------------------------------------------------ statistics
 
     async def _async_update_statistics(self, daily_payload: dict) -> None:
-        """Fetch whatever interval data we do not already have, and store it."""
+        """Refresh settled intervals, including recent utility restatements."""
         start = await self._async_statistics_start()
-        end = date.today()
+        end = datetime.now(PHOENIX).date() - timedelta(days=1)
         if start > end:
             LOGGER.debug("statistics already current through %s", end)
             return
@@ -222,18 +319,21 @@ class SRPCoordinator(DataUpdateCoordinator[SRPData]):
             return
 
         for series, (suffix, label) in _ENERGY_STATS.items():
-            await self._async_write_energy(series, suffix, label, intervals)
+            try:
+                await self._async_write_energy(series, suffix, label, intervals)
+            except SRPApiError as err:
+                LOGGER.warning("statistics replay skipped for %s: %s", suffix, err)
         await self._async_write_demand(intervals)
 
     async def _async_statistics_start(self) -> date:
-        """Resume from the last recorded hour, or reach back for a first run.
+        """Revisit recent settled days and gaps, or backfill a new installation.
 
         Consumption is the anchor because it is the one series every account
         has: generation and demand are empty on a plan without solar, so
         keying off the oldest series would refetch two years on every poll.
-        The cost is that clearing a *single* statistic will not refill it --
-        the fetch window has already moved on. Clear all four to force a
-        rebuild.
+        A missing individual series regains only the recent fetched window;
+        older missing history needs a controlled targeted backfill, preserving
+        the existing statistic IDs and known cumulative baseline.
         """
         last = await get_instance(self.hass).async_add_executor_job(
             get_last_statistics,
@@ -247,40 +347,31 @@ class SRPCoordinator(DataUpdateCoordinator[SRPData]):
             set(),
         )
         rows = last.get(self.statistic_id(STAT_CONSUMPTION)) if last else None
+        today = datetime.now(PHOENIX).date()
         if not rows:
             LOGGER.info("no SRP statistics yet; backfilling %s days", BACKFILL_DAYS)
-            return date.today() - timedelta(days=BACKFILL_DAYS)
-        # Re-fetch the last stored day: SRP restates recent intervals as meter
-        # data settles, and a sum statistic must be rebuilt from a known point
-        # rather than patched.
-        return datetime.fromtimestamp(rows[0]["start"], PHOENIX).date()
+            return today - timedelta(days=BACKFILL_DAYS)
+        last_day = max(datetime.fromtimestamp(row["start"], PHOENIX).date() for row in rows)
+        return min(last_day, today - timedelta(days=RESTATEMENT_DAYS))
 
     async def _async_write_energy(
         self, series: str, suffix: str, label: str, intervals: list[Interval]
     ) -> None:
-        """Write one hourly kWh series as a cumulative-sum statistic."""
-        rows = sorted((i for i in intervals if i.series == series), key=lambda i: i.start)
-        if not rows:
+        """Upsert revised hourly states and their complete cumulative tail."""
+        cutoff = datetime.now(PHOENIX).replace(hour=0, minute=0, second=0, microsecond=0)
+        values = _energy_values(series, intervals, cutoff)
+        if not values:
             return
         statistic_id = self.statistic_id(suffix)
-
+        # At most one stored row can exist per hour. This count includes every
+        # possible settled hour since the first input PLUS a preceding point,
+        # so it works across missing hours and retained tails without reading
+        # unrelated older history. Native kWh avoids display-unit conversion.
+        count = math.ceil((cutoff - min(values)).total_seconds() / 3600) + 1
         last = await get_instance(self.hass).async_add_executor_job(
-            get_last_statistics, self.hass, 1, statistic_id, True, {"sum"}
+            get_last_statistics, self.hass, count, statistic_id, False, {"state", "sum"}
         )
-        previous = last.get(statistic_id) if last else None
-        running = float(previous[0]["sum"]) if previous else 0.0
-        resume_after = datetime.fromtimestamp(previous[0]["start"], PHOENIX) if previous else None
-
-        points: list[StatisticData] = []
-        for row in rows:
-            start = row.start.replace(minute=0, second=0, microsecond=0, tzinfo=PHOENIX)
-            if resume_after is not None and start < resume_after:
-                continue
-            running += row.total
-            points.append(StatisticData(start=start, state=row.total, sum=running))
-
-        if not points:
-            return
+        points = _rebuild_energy_statistics(values, (last or {}).get(statistic_id, []), cutoff)
         async_add_external_statistics(
             self.hass,
             StatisticMetaData(

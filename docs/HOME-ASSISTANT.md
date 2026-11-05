@@ -150,12 +150,42 @@ be polite to someone else's website. Asking for more days than your account has 
 extra windows simply come back empty.
 
 So expect setup to sit there for a few minutes, and the sensors to appear only when it finishes.
-After that, each refresh fetches only the days since the last one recorded, and takes seconds.
+After that, each refresh revisits seven completed days in **America/Phoenix**, plus any gap
+since collection stopped. The current partial day is excluded. This catches utility revisions
+without downloading the entire retained history on every refresh.
 
 How far back you actually get depends on what SRP retains for your account. On the account this
-was developed against (885789006), hourly energy reached back to **2024-07-29**, and both
+was developed against, hourly energy reached back to **2024-07-29**, and both
 generation and half-hourly demand to **2025-05-04**, when the solar array came online and the
 account moved to a demand plan. Your dates will differ.
+
+### Utility restatements and existing history
+
+SRP can revise an hour after it first appears. The importer replaces that hour's energy
+`state` and recomputes every affected cumulative `sum` through the last recorded settled hour.
+It starts from the preceding recorded cumulative total, using Home Assistant's supported
+external-statistics import API and preserving statistic IDs. Signed net energy remains signed;
+export hours can reduce its cumulative total.
+
+An unchanged re-import is idempotent. A missing source hour retains an existing recorded
+reading; it is never silently replaced with zero. Conflicting duplicates, sub-hourly energy,
+non-finite readings, an unfilled gap, an unknown baseline or a future/unsettled stored tail
+cause that series' replay to be skipped with a warning. Current account sensors can still
+refresh. A new series starts at zero only when there is no earlier history, or its first
+recorded point establishes that zero origin.
+
+**Upgrading from 1.2.1 or earlier:** the old importer could leave revised earlier hours stale
+and add its unchanged last hour to `sum` again. The seven-day replay repairs affected recent
+states and later sums relative to the preceding baseline. It does not remove corruption
+already embedded in an older baseline or recover missing older history automatically.
+
+Before repairing older data, privately export exact affected statistic metadata and rows,
+record the intended date range and known preceding cumulative total, and retain a rollback.
+Use a targeted replay through the same supported API, including every later cumulative row
+whose value changes. Verify raw utility intervals, hourly `state`, adjacent `sum` differences
+and a repeated unchanged import before accepting the result. Preserve IDs; do not edit the
+recorder database or purge/reseed all history as a shortcut. This release does not itself run
+an unbounded historical repair.
 
 ---
 

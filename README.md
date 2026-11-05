@@ -4,11 +4,10 @@
 
 **An unofficial API for your own Salt River Project electricity data.**
 
-Salt River Project (SRP) is an electric utility in Arizona. If you are on one of its **demand
-price plans**, part of your bill is not set by how much power you used. It is set by your single
-worst half hour of the month. SRP shows you that number on one web page in My Account, and there
-is no documented API for it and no alert while it is still climbing — only a spreadsheet you
-download by hand, one chart at a time, after the fact.
+Salt River Project (SRP) is an electric utility in Arizona. Its **demand price plans** charge
+for high on-peak power as well as energy used. The calculation depends on your plan: E-15
+averages daily highest on-peak half-hours, while E-27 uses the cycle's highest half-hour.
+This project retrieves SRP's own plan-labelled demand figure and your electricity history.
 
 This project signs in to SRP as you, on a schedule, and hands your data back three ways:
 a **web dashboard**, a **REST API with Prometheus metrics**, and a **Home Assistant integration**.
@@ -47,9 +46,10 @@ a **web dashboard**, a **REST API with Prometheus metrics**, and a **Home Assist
 
 Most electricity bills charge for **energy** — how many kilowatt-hours you used over the month.
 
-SRP's demand plans add a second charge, for **demand**. Demand is how hard you were pulling at
-one moment, measured in kilowatts (kW). SRP looks at your worst on-peak stretch — a half hour on
-some plans, an hour on others — and bills you on that.
+SRP's demand plans add a second charge, for **demand**: average power over an on-peak interval,
+measured in kilowatts (kW). The billing calculation is plan dependent. E-15 averages daily
+highest 30-minute demands; E-27 uses the cycle's highest 30-minute demand. Other plans use
+60-minute intervals. [SRP explains the difference](https://www.srpnet.com/price-plans/residential-electric/solar-demand-plans-savings).
 
 The practical version: one July evening with the air conditioning, the oven, the dryer and the
 car charger all running at once can add more to your bill than an entire ordinary day of use.
@@ -243,6 +243,19 @@ billed on.
 
 On the account this was built against, the first backfill reached **2024-07-29** for energy and
 **2025-05-04** for generation and demand — everything SRP still retains.
+
+Later refreshes revisit the **seven most recent completed Arizona days**, plus any collection
+gap. Revised hourly energy replaces the previous value, and cumulative totals are rebuilt from
+a known preceding total through every affected later hour. Repeating an unchanged import does
+not add its final hour again. Missing response hours retain existing readings; ambiguous
+duplicates, missing baselines, unfilled gaps and future/incomplete-day rows skip that series
+with a diagnostic instead of manufacturing energy.
+
+Version 1.2.2 corrects the earlier Home Assistant importer, which could retain outdated revised
+hours and count its final hour repeatedly in cumulative statistics. The normal seven-day replay
+cannot repair older errors or prove its preceding total was historically correct. Back up the
+affected statistics and use a controlled targeted backfill when older history needs repair;
+do not clear or recreate every statistic. See [statistics recovery](docs/HOME-ASSISTANT.md#utility-restatements-and-existing-history).
 
 Only the on-peak leg of demand is stored. SRP publishes an off-peak figure too, and on a solar
 account it is far larger — 25.3 kW against a 12.7 kW billed peak over one measured cycle — so

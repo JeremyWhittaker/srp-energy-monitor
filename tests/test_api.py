@@ -221,7 +221,7 @@ def test_bill_projection_endpoint_and_metric(tmp_path):
     store = Store(tmp_path / "bill.db")
     store.record_bill_projection(
         BillProjection(
-            observed_at=datetime(2026, 8, 26, 17, 28),
+            observed_at=datetime.now(),  # Keep the fixture inside the default history window.
             amount_usd=430.0,
             basis="Your September bill projection is based on your usage through 8/25/26.",
             source=".h4.text-white",
