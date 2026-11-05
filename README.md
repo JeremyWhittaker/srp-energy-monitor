@@ -251,6 +251,8 @@ not add its final hour again. Missing response hours retain existing readings; a
 duplicates, missing baselines, unfilled gaps and future/incomplete-day rows skip that series
 with a diagnostic instead of manufacturing energy.
 
+Version 1.2.3 excludes SRP holidays from reconstructed average demand in both parsers, while preserving ordinary zero-demand weekdays. It also clarifies portal-series labels without changing their IDs or rewriting statistics. The daily-denominator rule follows the published tariff; a holiday-containing bill remains a separate verification gate.
+
 Version 1.2.2 corrects the earlier Home Assistant importer, which could retain outdated revised
 hours and count its final hour repeatedly in cumulative statistics. The normal seven-day replay
 cannot repair older errors or prove its preceding total was historically correct. Back up the

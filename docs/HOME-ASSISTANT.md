@@ -102,7 +102,7 @@ To confirm which version you are running, open `manifest.json` in your config fo
 `version` field. The current release is:
 
 ```json
-"version": "1.2.1"
+"version": "1.2.3"
 ```
 
 If it says **`1.2.0`**, you have the build that could stop polling permanently after a single
@@ -386,8 +386,8 @@ prompt now takes a new username and password and puts the integration straight b
 rather than sending you round to delete and re-add it.
 
 So before anything else, **check which version you are running**: open
-`/config/custom_components/srp_energy_monitor/manifest.json` and look at `version`. `1.2.1` has
-the fix; `1.2.0` is the build that had the outage. A hand-copied install never updates itself, so
+`/config/custom_components/srp_energy_monitor/manifest.json` and look at `version`. `1.2.1` and later have
+the session-recovery fix; `1.2.0` is the build that had the outage. A hand-copied install never updates itself, so
 this is the single most likely reason to still be seeing it.
 
 ### Checking the logs

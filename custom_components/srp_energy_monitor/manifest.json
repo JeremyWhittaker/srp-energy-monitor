@@ -10,5 +10,5 @@
   "issue_tracker": "https://github.com/JeremyWhittaker/srp-energy-monitor/issues",
   "loggers": ["custom_components.srp_energy_monitor"],
   "requirements": [],
-  "version": "1.2.2"
+  "version": "1.2.3"
 }

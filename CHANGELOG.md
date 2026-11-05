@@ -4,7 +4,7 @@ Notable changes to this project. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.2.3] — 2026-11-05
 
 ### Fixed
 - Both JSON parsers exclude SRP's six holidays from reconstructed E-15/E-16 average demand,
@@ -108,7 +108,7 @@ broken build is `1.2.0`.
   list's on-peak field. On 2026-08-27 that was 21 kWh, while the hourly generation series summed
   to 84.5 kWh. The original explanation incorrectly generalised that daily off-peak values were
   always zero and that the hourly series measured all solar production. November 2026 evidence
-  and the Unreleased documentation correction above supersede those claims.
+  and the 1.2.3 documentation correction above supersede those claims.
 - **Interval demand no longer carries its off-peak leg.** The daily parser already dropped it —
   SRP publishes an off-peak demand figure but bills only the on-peak one — while the interval
   parser kept both, and the Home Assistant coordinator then stored `max(off_peak, on_peak)` as

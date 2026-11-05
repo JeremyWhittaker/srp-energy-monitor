@@ -24,7 +24,7 @@ from .parser import (
 )
 from .storage import Store
 
-__version__ = "1.1.0"
+__version__ = "1.2.3"
 
 __all__ = [
     # models
