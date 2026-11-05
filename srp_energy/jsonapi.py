@@ -326,13 +326,11 @@ def parse_daily_weather(payload: Any) -> dict[date, tuple[float | None, float | 
 
 
 def parse_cycle_peaks(payload: dict[str, Any]) -> list[CyclePeak]:
-    """Extract billed demand peaks from ``highDemandInfoList``.
+    """Extract reported cycle maxima from ``highDemandInfoList``.
 
-    This is the figure the demand charge is actually computed from: the single
-    highest on-peak half hour of the billing cycle, with the timestamp it
-    happened. Nothing else in either backend captures it, and it is not
-    derivable from hourly data -- an hourly average understates a half-hourly
-    maximum by however hard the load ramped inside the hour.
+    A peak-demand plan bills this maximum; an average-demand plan instead uses
+    the mean of its daily on-peak maxima. Preserve the reported timestamp:
+    an hourly mean cannot reconstruct a shorter interval's maximum.
     """
     is_average = bool(payload.get("isAverageDemandRate"))
     out: list[CyclePeak] = []
@@ -357,6 +355,41 @@ def parse_cycle_peaks(payload: dict[str, Any]) -> list[CyclePeak]:
     return out
 
 
+def _observed_holiday(day: date) -> date:
+    """Observe a Saturday holiday on Friday and a Sunday holiday on Monday."""
+    if day.weekday() == 5:
+        return day - timedelta(days=1)
+    if day.weekday() == 6:
+        return day + timedelta(days=1)
+    return day
+
+
+def _is_srp_on_peak_day(day: date) -> bool:
+    """E-15/E-16 weekdays excluding the six SRP holidays (2026 ratebook)."""
+    if day.weekday() >= 5:
+        return False
+    year = day.year
+    holidays = {
+        _observed_holiday(date(year, 1, 1)),
+        _observed_holiday(date(year, 7, 4)),
+        _observed_holiday(date(year, 12, 25)),
+    }
+    # A Saturday New Year's Day is observed in the preceding calendar year.
+    if year < date.max.year:
+        holidays.add(_observed_holiday(date(year + 1, 1, 1)))
+    may_end = date(year, 5, 31)
+    september_start = date(year, 9, 1)
+    november_start = date(year, 11, 1)
+    holidays.update(
+        {
+            may_end - timedelta(days=may_end.weekday()),
+            september_start + timedelta(days=(-september_start.weekday()) % 7),
+            november_start + timedelta(days=(3 - november_start.weekday()) % 7 + 21),
+        }
+    )
+    return day not in holidays
+
+
 def parse_demand_observation(
     payload: dict[str, Any], observed_at: datetime | None = None
 ) -> DemandObservation | None:
@@ -375,17 +408,22 @@ def parse_demand_observation(
       hands over directly in ``highDemandInfoList``.
     * **Average-demand plan** (E-15, E-16; ``isAverageDemandRate`` true) -- the
       billed figure is the *mean of the daily on-peak maxima*, and SRP does not
-      publish it as a field. It is reconstructed here as the mean of
-      ``dailyDemandList`` over the cycle's **weekdays**: weekends carry no
-      on-peak demand, so including their zeros halves the answer.
+      publish it as a field. The tariff intervals are 30 minutes for E-15 and
+      60 minutes for E-16; this uses SRP's published daily maxima without
+      regrouping intervals. It is reconstructed here as the mean of
+      ``dailyDemandList`` over the cycle's on-peak weekdays, excluding SRP's
+      six holidays. Ordinary weekday zeros still count. This denominator is
+      inferred from the tariff's on-peak definition and demand calculation;
+      a holiday-containing billing cycle has not yet been reconciled.
 
     The reconstruction was checked against the number the portal itself
     displayed for the 2026-08-10 cycle: computed 5.62 kW against a printed
-    5.60 kW. The residual is the daily figures being published to one decimal.
+    5.60 kW. That cycle contained no SRP holidays. Daily figures are published
+    to one decimal, consistent with the small rounding difference.
     Treat an average-plan value as accurate to about ±0.05 kW, and the scraped
     figure as authoritative if you have both.
 
-    Returns ``None`` when the payload carries no cycle information at all.
+    Returns ``None`` with no cycle information or no eligible daily maxima.
     """
     peaks = parse_cycle_peaks(payload)
     if not peaks:
@@ -402,20 +440,20 @@ def parse_demand_observation(
         )
 
     daily = parse_daily_usage_detail(payload, series=[Series.DEMAND])
-    weekday_maxima = [
+    on_peak_maxima = [
         r.on_peak
         for r in daily
         if cycle.cycle_start <= r.usage_date <= cycle.cycle_end
-        and r.usage_date.weekday() < 5
+        and _is_srp_on_peak_day(r.usage_date)
         and r.on_peak is not None
     ]
-    if not weekday_maxima:
+    if not on_peak_maxima:
         return None
     return DemandObservation(
         observed_at=stamp,
-        demand_kw=round(sum(weekday_maxima) / len(weekday_maxima), 2),
+        demand_kw=round(sum(on_peak_maxima) / len(on_peak_maxima), 2),
         label="Current Average On-Peak Demand",
-        source="usage/dailyusagedetail:dailyDemandList (weekday mean)",
+        source="usage/dailyusagedetail:dailyDemandList (on-peak day mean)",
     )
 
 

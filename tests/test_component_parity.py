@@ -116,6 +116,99 @@ def test_current_demand_agrees_on_both_plan_types(srp_api, daily, is_average):
     assert flagged_average is observation.is_average is is_average
 
 
+def _demand_payload(rows, *, is_average=True):
+    """A synthetic cycle with portal-shaped daily maxima and no account data."""
+    days = [day for day, _ in rows]
+    return {
+        "isAverageDemandRate": is_average,
+        "highDemandInfoList": [
+            {
+                "billStartDate": min(days).isoformat(),
+                "billEndDate": max(days).isoformat(),
+                "onPeakHighDemand": 19.0,
+            }
+        ],
+        "dailyDemandList": [
+            {"date": day.isoformat(), "onPeakDemand": value} for day, value in rows
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    "holiday",
+    [
+        pytest.param(date(2026, 1, 1), id="new-year-weekday"),
+        pytest.param(date(2027, 12, 31), id="next-new-year-observed-friday"),
+        pytest.param(date(2023, 1, 2), id="new-year-observed-monday"),
+        pytest.param(date(2026, 5, 25), id="memorial-last-monday"),
+        pytest.param(date(2026, 7, 3), id="independence-observed-friday"),
+        pytest.param(date(2027, 7, 5), id="independence-observed-monday"),
+        pytest.param(date(2024, 7, 4), id="independence-weekday"),
+        pytest.param(date(2026, 9, 7), id="labor-first-monday"),
+        pytest.param(date(2026, 11, 26), id="thanksgiving-fourth-thursday"),
+        pytest.param(date(2026, 12, 25), id="christmas-weekday"),
+        pytest.param(date(2021, 12, 24), id="christmas-observed-friday"),
+        pytest.param(date(2022, 12, 26), id="christmas-observed-monday"),
+    ],
+)
+@pytest.mark.parametrize("holiday_demand", [0.0, 12.0])
+def test_average_excludes_srp_holidays_in_both(srp_api, holiday, holiday_demand):
+    """A holiday is excluded by its date, including cross-year observance."""
+    payload = _demand_payload([(holiday, holiday_demand), (date(2026, 2, 3), 6.0)])
+    assert srp_api.current_demand(payload) == (6.0, True)
+    assert jsonapi.parse_demand_observation(payload).demand_kw == 6.0
+
+
+@pytest.mark.parametrize(
+    "ordinary_day",
+    [
+        pytest.param(date(2026, 2, 3), id="ordinary-weekday"),
+        pytest.param(date(2026, 1, 19), id="mlk-day-is-on-peak"),
+        pytest.param(date(2026, 11, 27), id="black-friday-is-on-peak"),
+        pytest.param(date(2026, 5, 18), id="monday-before-memorial"),
+        pytest.param(date(2026, 9, 14), id="monday-after-labor"),
+        pytest.param(date(2026, 11, 19), id="thursday-before-thanksgiving"),
+    ],
+)
+@pytest.mark.parametrize("ordinary_demand", [0.0, 10.0])
+def test_average_keeps_nonholiday_weekdays_in_both(srp_api, ordinary_day, ordinary_demand):
+    """A real zero remains in the denominator, as do non-SRP holidays."""
+    payload = _demand_payload([(ordinary_day, ordinary_demand), (date(2026, 2, 4), 6.0)])
+    expected = (ordinary_demand + 6.0) / 2
+    assert srp_api.current_demand(payload) == (expected, True)
+    assert jsonapi.parse_demand_observation(payload).demand_kw == expected
+
+
+def test_only_srp_holidays_has_no_average_in_both(srp_api):
+    payload = _demand_payload(
+        [(date(2026, 1, 1), 0.0), (date(2026, 7, 3), 0.0), (date(2026, 11, 26), 0.0)]
+    )
+    assert srp_api.current_demand(payload) is None
+    assert jsonapi.parse_demand_observation(payload) is None
+
+
+def test_cross_year_cycle_keeps_only_on_peak_weekdays_in_both(srp_api):
+    payload = _demand_payload(
+        [
+            (date(2021, 12, 30), 0.0),  # genuine zero
+            (date(2021, 12, 31), 0.0),  # next year's observed New Year's Day
+            (date(2022, 1, 1), 0.0),  # Saturday
+            (date(2022, 1, 2), 0.0),  # Sunday
+            (date(2022, 1, 3), 6.0),
+        ]
+    )
+    assert srp_api.current_demand(payload) == (3.0, True)
+    assert jsonapi.parse_demand_observation(payload).demand_kw == 3.0
+
+
+def test_holiday_filter_does_not_change_peak_plan_in_both(srp_api):
+    payload = _demand_payload([(date(2026, 11, 26), 0.0)], is_average=False)
+    assert srp_api.current_demand(payload) == (19.0, False)
+    observation = jsonapi.parse_demand_observation(payload)
+    assert observation.demand_kw == 19.0
+    assert observation.is_average is False
+
+
 def test_bill_projection_agrees(srp_api):
     payload = {"amount": 435.0, "month": "September", "hasProjection": True}
     assert srp_api.parse_projection(payload) == jsonapi.parse_bill_projection(payload).amount_usd

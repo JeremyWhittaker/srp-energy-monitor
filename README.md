@@ -131,8 +131,8 @@ something in them immediately. It signs in to SRP itself, every four hours.
 
 | Series | What SRP reports | Unit |
 |---|---|---|
-| `usage` | Energy you consumed, split off-peak / on-peak | kWh |
-| `generation` | Energy your solar produced, split off-peak / on-peak | kWh |
+| `usage` | SRP's consumption series, split off-peak / on-peak | kWh |
+| `generation` | SRP's generation series, split off-peak / on-peak; physical coverage is unverified | kWh |
 | `net` | Net energy — negative when you export more than you draw | kWh |
 | `demand` | Your daily on-peak demand | kW |
 
@@ -230,16 +230,16 @@ fail to build a wheel on a Raspberry Pi.
 | Current demand | kW | What SRP prints for the cycle in progress — an average on E-15/E-16, a maximum on E-27. The `is_average` attribute says which. |
 | Billed cycle peak | kW | The single highest on-peak half hour of the cycle, with the timestamp it happened |
 | Bill projection | USD | SRP's own projection for this cycle |
-| Daily consumption | kWh | The most recent settled day |
+| Daily consumption | kWh | SRP's consumption series for the most recent settled day |
 | Daily on-peak generation | kWh | The most recent settled day, **on-peak only** — see the warning below |
 | Daily net energy | kWh | The most recent settled day |
 
 ### Years of history, back-filled on day one
 
-It also writes **long-term statistics**: hourly kWh for consumption, generation and net, plus
-half-hourly on-peak demand stored as an hourly mean with a min and a max. Chart the **max**
-column — it keeps the highest half hour inside each hour, which is the granularity demand is
-billed on.
+It also writes **long-term statistics**: hourly kWh for SRP's consumption, generation and net
+series, plus supplied on-peak demand intervals stored as an hourly mean with a min and a max.
+Chart the **max** column to keep the highest supplied interval within each hour. That chart is
+different from the average daily maxima used to bill E-15/E-16.
 
 On the account this was built against, the first backfill reached **2024-07-29** for energy and
 **2025-05-04** for generation and demand — everything SRP still retains.
@@ -263,13 +263,14 @@ keeping both would draw a chart that looks like demand while showing a number no
 contained.
 
 > [!IMPORTANT]
-> **Generation has two numbers and they are not the same quantity.** SRP's daily generation list
-> leaves its off-peak column at zero and reports only the on-peak leg — the part netted against
-> on-peak consumption — so it reads 0 on weekends, when there is no on-peak period. Total
-> production lives in the hourly list, and that is what the `energy_generation` statistic sums.
-> Measured on 2026-08-27: **21 kWh** from the daily list against **84.5 kWh** from the hourly
-> one. The daily sensor is called *on-peak generation* for exactly this reason. Consumption and
-> net have no such split — their daily and hourly lists agree to within a rounding step.
+> **SRP generation is a portal series, not a verified whole-roof production meter.** The daily
+> sensor deliberately keeps only the daily list's **on-peak** field. Its existing name and ID
+> stay unchanged. Daily off-peak generation is not always zero: November 2026 responses contain
+> nonzero values. The `energy_generation` statistic sums the hourly portal generation series.
+> On 2026-08-27, the daily on-peak figure was **21 kWh**, while the hourly series summed to
+> **84.5 kWh**. That difference does not prove either figure measures all solar panels.
+> Reconciliation with inverter and panel-monitor totals remains open; do not add this series to
+> those totals as if it were another independent array.
 
 A three-view dashboard built against these sensors is in
 [`docs/ha-dashboard.yaml`](docs/ha-dashboard.yaml). Paste it into a dashboard's raw
@@ -531,7 +532,18 @@ E-27 is a **maximum**. E-15 and E-16 are **averages**. Report one as the other a
 misstated the number that drives the charge. **E-16 is open to every residential customer, solar
 or not**, so a demand charge is no longer a solar owner's problem.
 
-Because of that, this project never guesses. It records SRP's own caption next to the value:
+The JSON average uses daily on-peak maxima on weekdays, excluding SRP's six holidays:
+observed New Year's Day, Memorial Day, observed Independence Day, Labor Day, Thanksgiving Day
+and observed Christmas Day. Saturday fixed-date holidays are observed Friday; Sunday holidays
+are observed Monday, including New Year's Day observed on the preceding December 31.
+Ordinary zero-demand weekdays still count; MLK Day and Black Friday are not SRP holidays.
+This denominator is inferred from the [2026 ratebook](https://www.srpnet.com/assets/srpnet/pdf/price-plans/FY26/TCA%20Ratebooks/2025-Ratebook-with-2026-TCA-with-cover.pdf)
+(E-15 pp. 13–14, 17; E-16 pp. 20, 24). A holiday-containing billing cycle has not yet been
+reconciled. The earlier 5.62 kW calculation versus 5.60 kW displayed covered a cycle without
+SRP holidays and supports only the ordinary-weekday calculation and its rounding tolerance.
+
+Demand records include a caption and an `is_average` attribute so consumers can distinguish
+the quantities:
 
 ```json
 { "demand_kw": 5.4, "label": "Current Average On-Peak Demand", "is_average": true }
@@ -541,10 +553,9 @@ Because of that, this project never guesses. It records SRP's own caption next t
 as if it were a peak understated the real maximum by more than 2× — 5.4 kW against an actual
 12.7 kW.
 
-Plan lineups change; SRP restructured them in November 2025. The caption is read off the page
-rather than hard-coded precisely so this keeps working when they change again. If SRP restyles
-that card so the caption cannot be read, the value is still recorded, `label` comes back `null`,
-and a warning is logged. Do not assume a peak in that case either.
+The browser path reads the caption from SRP's page; the JSON path uses its `isAverageDemandRate`
+flag and reconstructs an average when needed. If the browser cannot read a caption, it retains
+the value with a null `label` and logs a warning. Check the plan rather than assuming a peak.
 
 ---
 

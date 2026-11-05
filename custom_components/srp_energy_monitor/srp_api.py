@@ -320,7 +320,7 @@ def parse_daily(payload: dict[str, Any], series: list[str] | None = None) -> lis
 
 
 def parse_cycle_peaks(payload: dict[str, Any]) -> list[CyclePeak]:
-    """Billed demand peaks, oldest cycle first."""
+    """Reported cycle maxima, oldest first; average plans bill a separate mean."""
     is_average = bool(payload.get("isAverageDemandRate"))
     out: list[CyclePeak] = []
     for row in payload.get("highDemandInfoList") or []:
@@ -341,6 +341,41 @@ def parse_cycle_peaks(payload: dict[str, Any]) -> list[CyclePeak]:
     return out
 
 
+def _observed_holiday(day: date) -> date:
+    """Observe a Saturday holiday on Friday and a Sunday holiday on Monday."""
+    if day.weekday() == 5:
+        return day - timedelta(days=1)
+    if day.weekday() == 6:
+        return day + timedelta(days=1)
+    return day
+
+
+def _is_srp_on_peak_day(day: date) -> bool:
+    """E-15/E-16 weekdays excluding the six SRP holidays (2026 ratebook)."""
+    if day.weekday() >= 5:
+        return False
+    year = day.year
+    holidays = {
+        _observed_holiday(date(year, 1, 1)),
+        _observed_holiday(date(year, 7, 4)),
+        _observed_holiday(date(year, 12, 25)),
+    }
+    # A Saturday New Year's Day is observed in the preceding calendar year.
+    if year < date.max.year:
+        holidays.add(_observed_holiday(date(year + 1, 1, 1)))
+    may_end = date(year, 5, 31)
+    september_start = date(year, 9, 1)
+    november_start = date(year, 11, 1)
+    holidays.update(
+        {
+            may_end - timedelta(days=may_end.weekday()),
+            september_start + timedelta(days=(-september_start.weekday()) % 7),
+            november_start + timedelta(days=(3 - november_start.weekday()) % 7 + 21),
+        }
+    )
+    return day not in holidays
+
+
 def current_demand(payload: dict[str, Any]) -> tuple[float, bool] | None:
     """The headline demand figure for the open cycle, and whether it is a mean.
 
@@ -348,14 +383,16 @@ def current_demand(payload: dict[str, Any]) -> tuple[float, bool] | None:
     the number that drives the demand charge:
 
     * peak plan (E-27) -- the cycle maximum, published directly
-    * average plan (E-15, E-16) -- the mean of the daily on-peak maxima, which
-      SRP does *not* publish, reconstructed here over the cycle's **weekdays**.
-      Weekends carry no on-peak demand, so averaging their zeros in halves the
-      answer.
+    * average plan (E-15, E-16) -- the mean of the daily on-peak maxima (30-minute
+      demand on E-15, 60-minute on E-16). SRP does *not* publish the mean, so it
+      is reconstructed from its daily maxima over the cycle's on-peak
+      weekdays, excluding SRP's six holidays. Ordinary weekday zeros count.
+      This denominator follows the tariff's on-peak definition and demand
+      calculation; no holiday-containing cycle has yet been reconciled.
 
     Reconstruction was checked against the portal's own printed figure: 5.62 kW
-    computed against 5.60 displayed, the residual being daily values published
-    to one decimal.
+    computed against 5.60 displayed in the non-holiday 2026-08-10 cycle. Daily
+    values are published to one decimal, consistent with the rounding gap.
     """
     peaks = parse_cycle_peaks(payload)
     if not peaks:
@@ -368,7 +405,7 @@ def current_demand(payload: dict[str, Any]) -> tuple[float, bool] | None:
         d.on_peak
         for d in parse_daily(payload, ["demand"])
         if cycle.cycle_start <= d.day <= cycle.cycle_end
-        and d.day.weekday() < 5
+        and _is_srp_on_peak_day(d.day)
         and d.on_peak is not None
     ]
     if not maxima:

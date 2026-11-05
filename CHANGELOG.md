@@ -4,6 +4,29 @@ Notable changes to this project. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- Both JSON parsers exclude SRP's six holidays from reconstructed E-15/E-16 average demand,
+  including observed fixed-date holidays and New Year's Day observed on December 31. Ordinary
+  zero-demand weekdays, MLK Day and Black Friday still count. Peak-plan maxima are unchanged.
+  The calendar follows the 2026 tariff; a holiday-containing bill has not yet been reconciled.
+- Documentation and sample chart labels distinguish SRP's consumption and generation series
+  from independently measured grid import and whole-roof production. November 2026 responses
+  disprove the earlier claim that daily off-peak generation is always zero. The daily sensor
+  continues to use only the on-peak field; IDs and statistic sources are unchanged.
+
+## [1.2.2] — 2026-11-04
+
+### Fixed
+- Home Assistant refreshes revisit seven completed Arizona days plus collection gaps, replacing
+  revised hourly readings and rebuilding affected cumulative totals from a known prior total.
+  Repeating an unchanged import no longer adds the final hour again.
+- Ambiguous duplicates, invalid values, missing baselines, unfilled gaps and unsettled future
+  hours stop the affected series with a diagnostic. Existing history is retained when a response
+  omits an hour. Older corruption requires a backed-up, targeted repair; this release does not
+  automatically reset or certify all historical statistics.
+
 ## [1.2.1] — 2026-09-03
 
 This is the release that fixes the Home Assistant outage described under *Fixed*. If you are
@@ -81,13 +104,11 @@ broken build is `1.2.0`.
   `reauth_confirm` step: it asks for a username and password only, validates them against SRP,
   updates the existing entry in place and reloads it, so the coordinator that stopped polling is
   the one that starts again.
-- **The daily generation entity is named for what it actually holds.** SRP's
-  `dailyGenerationList` populates only its on-peak column; the off-peak one is always zero, so
-  the figure reads 0 on weekends while the array is plainly still producing. Summing the two
-  columns and calling the result "daily generation" understated 2026-08-27 as 21 kWh against
-  84.5 kWh summed from `hourlyGenerationList`. Renamed to **Daily on-peak generation**; total
-  production is the `energy_generation` statistic, which was already correct. Consumption and
-  net needed no change -- their daily and hourly lists agree to within a rounding step.
+- **The daily generation entity was renamed to Daily on-peak generation.** It uses the daily
+  list's on-peak field. On 2026-08-27 that was 21 kWh, while the hourly generation series summed
+  to 84.5 kWh. The original explanation incorrectly generalised that daily off-peak values were
+  always zero and that the hourly series measured all solar production. November 2026 evidence
+  and the Unreleased documentation correction above supersede those claims.
 - **Interval demand no longer carries its off-peak leg.** The daily parser already dropped it —
   SRP publishes an off-peak demand figure but bills only the on-peak one — while the interval
   parser kept both, and the Home Assistant coordinator then stored `max(off_peak, on_peak)` as

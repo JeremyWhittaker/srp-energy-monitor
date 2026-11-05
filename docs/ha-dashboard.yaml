@@ -89,7 +89,7 @@ views:
       icon: mdi:home-lightning-bolt
     - type: statistic
       entity: srp_energy_monitor:123456789_energy_consumption
-      name: Grid draw, this month
+      name: SRP consumption, this month
       stat_type: change
       period:
         calendar:
@@ -98,7 +98,7 @@ views:
         columns: 6
     - type: statistic
       entity: srp_energy_monitor:123456789_energy_generation
-      name: Generation, this month
+      name: SRP generation, this month
       stat_type: change
       period:
         calendar:
@@ -107,7 +107,7 @@ views:
         columns: 6
     - type: statistic
       entity: srp_energy_monitor:123456789_energy_consumption
-      name: Grid draw, 30 days
+      name: SRP consumption, 30 days
       stat_type: change
       period:
         rolling_window:
@@ -117,7 +117,7 @@ views:
         columns: 6
     - type: statistic
       entity: srp_energy_monitor:123456789_energy_generation
-      name: Generation, 30 days
+      name: SRP generation, 30 days
       stat_type: change
       period:
         rolling_window:
@@ -214,7 +214,7 @@ views:
       heading_style: title
       icon: mdi:transmission-tower
     - type: statistics-graph
-      title: Grid draw vs generation, last 7 days
+      title: SRP consumption and generation, last 7 days
       entities:
       - srp_energy_monitor:123456789_energy_consumption
       - srp_energy_monitor:123456789_energy_generation
@@ -274,7 +274,7 @@ views:
       heading_style: title
       icon: mdi:database-clock
     - type: statistics-graph
-      title: Grid draw, per day
+      title: SRP consumption, per day
       entities:
       - srp_energy_monitor:123456789_energy_consumption
       stat_types:
@@ -287,7 +287,7 @@ views:
         columns: full
         rows: 6
     - type: statistics-graph
-      title: Generation, per day
+      title: SRP generation, per day
       entities:
       - srp_energy_monitor:123456789_energy_generation
       stat_types:

@@ -202,7 +202,7 @@ follow from that name, so on account 885789006 they look like this:
 | `sensor.srp_account_885789006_billed_cycle_peak` | The single highest on-peak half hour of the current cycle — the worst moment itself. | kW | `occurred_at` (when it happened), `cycle_start`, `cycle_end` |
 | `sensor.srp_account_885789006_bill_projection` | SRP's own projection of what this cycle's bill will come to. Blank if SRP has not produced one yet. | USD | — |
 | `sensor.srp_account_885789006_daily_consumption` | Energy consumed on the most recent settled day. | kWh | — |
-| `sensor.srp_account_885789006_daily_generation` | **On-peak solar generation only** for the most recent settled day — see the warning below. Displayed as "Daily on-peak generation". | kWh | — |
+| `sensor.srp_account_885789006_daily_generation` | SRP's daily **on-peak generation field** for the most recent settled day — see the warning below. Displayed as "Daily on-peak generation". | kWh | — |
 | `sensor.srp_account_885789006_daily_net_energy` | What the meter actually registered on the most recent settled day, after exports. | kWh | — |
 
 Every one of the six also carries `attribution` ("Data from Salt River Project") and
@@ -234,8 +234,8 @@ colon:
 
 | Statistic ID | What it holds | Unit |
 |---|---|---|
-| `srp_energy_monitor:885789006_energy_consumption` | Hourly energy consumed, as a running total | kWh |
-| `srp_energy_monitor:885789006_energy_generation` | Hourly **total** solar production, as a running total | kWh |
+| `srp_energy_monitor:885789006_energy_consumption` | Hourly SRP consumption series, as a running total | kWh |
+| `srp_energy_monitor:885789006_energy_generation` | Hourly SRP generation series, as a running total; whole-roof coverage unverified | kWh |
 | `srp_energy_monitor:885789006_energy_net` | Hourly metered read, as a running total | kWh |
 | `srp_energy_monitor:885789006_demand_kw` | Half-hourly **on-peak** demand, summarised per hour as an average, a minimum and a **maximum** | kW |
 
@@ -249,20 +249,21 @@ an off-peak demand figure too, but no bill has ever contained it, and on a solar
 larger — 25.3 kW against a 12.7 kW billed peak over one measured cycle — so charting both would
 produce something that looks like a demand graph while showing a number you were never charged for.
 
-The three kWh series carry a running total, which is what Home Assistant's **Energy dashboard**
-requires of a source, so they can be offered there as well as on statistics cards. The demand
-series is a rate in kW with no total, so it belongs on statistics cards only.
+The three kWh series carry a running total and can be offered on Home Assistant's **Energy
+dashboard** or statistics cards. Check the physical measurement boundary before selecting them:
+SRP's consumption and generation series have not been reconciled to all inverter and panel
+totals. Adding overlapping sources can count the same energy twice. The demand series is a rate
+in kW with no total, so it belongs on statistics cards only.
 
 > [!IMPORTANT]
 > **Two pairs that are easy to confuse.**
 >
-> **`sensor.…_daily_generation` is not your total solar production.** SRP's daily generation list
-> leaves the off-peak column at zero and reports only the on-peak leg — the part it nets against
-> your on-peak consumption. That is why it reads 0 on weekends while the array is plainly still
-> producing. Measured on 2026-08-27: 21 kWh from the daily list against 84.5 kWh actually
-> generated. **Total production is the `energy_generation` statistic**, which is summed from the
-> hourly data. The sensor is named "on-peak generation" precisely so the two are not mistaken for
-> each other.
+> **`sensor.…_daily_generation` keeps only SRP's daily on-peak field.** Its scope, name and ID
+> remain unchanged. The daily list can also carry off-peak generation: November 2026 responses
+> contain nonzero values. The `energy_generation` statistic sums the hourly portal generation
+> series. On 2026-08-27 those two figures were 21 kWh and 84.5 kWh; neither was independently
+> established as whole-roof production. The portal's generation semantics and its relationship
+> to hardware solar totals remain unresolved.
 >
 > **`sensor.…_daily_net_energy` is the metered read, not your consumption.** On a solar account
 > those are different quantities: consumption is what you used, the metered read is what the meter
@@ -292,9 +293,9 @@ The three views:
 
 | View | What it shows |
 |---|---|
-| **Bill Cycle** | The cycle in progress. Badges and tiles for the projected bill, the billed demand figure and the worst half hour; a gauge for demand scaled 0–15 kW with a yellow band at 6 and red at 9; a 45-day chart of the daily on-peak maximum; month-to-date and rolling-30-day totals for grid draw and generation; tiles for the last settled day; and a 60-day bar chart of the metered read. |
-| **Daily Shape** | Where the charge actually gets set. An hour-by-hour chart of on-peak demand over the last 7 days, and grid draw against generation over the same week, so the evening ramp that sets your demand charge is visible as a shape rather than a single number. |
-| **History** | The long view. Daily bars for grid draw, generation and metered read across 760 days, and a 460-day line of the daily on-peak maximum. This is the view the backfill exists for. |
+| **Bill Cycle** | The cycle in progress. Badges and tiles for the projected bill, the billed demand figure and the worst half hour; a gauge for demand scaled 0–15 kW with a yellow band at 6 and red at 9; a 45-day chart of the daily on-peak maximum; month-to-date and rolling-30-day totals for SRP consumption and generation; tiles for the last settled day; and a 60-day bar chart of the metered read. |
+| **Daily Shape** | An hour-by-hour chart of on-peak demand over the last 7 days, with SRP consumption and generation over the same week. The consumption series is not labelled as a separate grid-import meter. |
+| **History** | Daily bars for SRP consumption, generation and metered read across 760 days, and a 460-day line of the daily on-peak maximum. |
 
 Adjust the gauge's `min`, `max` and `severity` thresholds to your own household — 15 kW full scale
 suits the account it was built on and may be far too high or too low for yours.
@@ -447,17 +448,20 @@ bills on — an **average** of each day's worst on-peak stretch on E-15 and E-16
 on E-27 — while `billed_cycle_peak` is always the single worst half hour of the cycle. On one real
 cycle those read 5.26 kW and 12.7 kW at the same time. Check the `is_average` attribute on
 `current_demand` to see which quantity your plan produced. If you are on an average plan, SRP does
-not publish the average directly; it is reconstructed here from the cycle's weekday daily maxima,
-which checks out against the portal's own printed figure to within a rounding step (5.62 computed
-against 5.60 displayed). Weekends carry no on-peak demand and are excluded, because averaging their
-zeros in would halve the answer.
+not publish the average directly; it is reconstructed from daily on-peak maxima, excluding weekends
+and SRP's six holidays. Ordinary zero-demand weekdays still count. See the
+[calendar and tariff evidence](../README.md#which-plans-charge-for-demand).
+This rule follows the tariff wording; it has not yet been reconciled against a holiday-containing
+billing cycle. The 5.62 kW calculation versus 5.60 kW displayed was checked on the non-holiday
+2026-08-10 cycle, with daily values rounded to one decimal.
 
 **Why is generation lower than my inverter says?**
 
-Because `sensor.…_daily_generation` is the **on-peak leg only**, which is the part SRP nets against
-your on-peak consumption. It reads 0 on weekends, when there is no on-peak period at all, no matter
-how sunny it was. Your total production is in the `energy_generation` statistic. Measured on one
-day: 21 kWh in the daily sensor against 84.5 kWh actually generated.
+The daily sensor retains SRP's **on-peak field only**. The hourly `energy_generation` statistic
+is a different portal series, and neither has been verified as a measurement of every solar
+panel. Daily off-peak values are sometimes nonzero; the older claim that they were always zero
+was based on limited observations. Compare matching dates and measurement boundaries before
+drawing conclusions about inverter or panel performance.
 
 **Why is there no data for today?**
 
