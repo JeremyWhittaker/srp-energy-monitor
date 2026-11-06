@@ -102,7 +102,7 @@ To confirm which version you are running, open `manifest.json` in your config fo
 `version` field. The current release is:
 
 ```json
-"version": "1.2.3"
+"version": "1.2.4"
 ```
 
 If it says **`1.2.0`**, you have the build that could stop polling permanently after a single
@@ -480,3 +480,18 @@ No. The Home Assistant integration fetches its own data straight from SRP and st
 Assistant's database. The collector (which fills a SQLite database for the command-line tools and
 Prometheus) and the web dashboard are independent pieces of the same project, useful if you want
 data outside Home Assistant. Nothing in Home Assistant depends on either.
+
+
+## Demand cross-check — version 1.2.4
+
+The new **Demand audit** diagnostic compares the utility daily on-peak maximum with complete
+raw half-hour intervals from the same normal refresh. Explicitly configure the integration
+option `demand_audit_plan` to `E15` only for that household policy; the average-demand flag
+alone also covers E-16. Account enrollment and historical plan identity remain separate.
+
+Attributes identify missing slots, source revisions, both maxima, the exact winning interval,
+and derived cycle means with complete eligible-day coverage. They check related utility
+reports, not a second calibrated meter or an actual billed-demand dollar line. A stable content
+checksum tracks changed evidence; it is not proof that the utility bill is correct. No extra
+login, payment endpoint or hourly-statistics reset is introduced. See the README for the
+seven-day window, calendar, rounding and unavailable-data rules.

@@ -460,7 +460,7 @@ see **[deploy/README.md](deploy/README.md)**.
 |---|---|
 | `GET /api/v1/demand` | Latest bill-cycle demand figure, with SRP's own caption |
 | `GET /api/v1/demand/history?days=30` | Demand observations over time |
-| `GET /api/v1/cycle-peaks?limit=24` | The figure each billing cycle was actually charged on |
+| `GET /api/v1/cycle-peaks?limit=24` | Reported cycle maximum in kW; E-15/E-16 billed averages and actual dollar charges are separate |
 | `GET /api/v1/bill-projection` | SRP's projected bill for this cycle |
 | `GET /api/v1/bill-projection/history?days=30` | Projection over time |
 | `GET /api/v1/readings?series=&start=&end=` | Daily readings, filterable |
@@ -773,11 +773,13 @@ you** — a contract SRP publishes to its own customers.
 same undocumented, unversioned endpoints `srpenergy` calls — with no browser at all. The Home
 Assistant integration speaks this one.
 
-The JSON API can do everything the browser can: `isAverageDemandRate` states which quantity your
-plan bills, `payments/billprojection` returns the projection as a field, and `demandList` carries
-48 half-hourly kW readings a day that no other public client parses. The billed demand charge
-comes out exactly — `max(onPeakDemand)` over a cycle matched SRP's own figure to the interval,
-12.7 kW in the half hour ending 2026-08-18 20:00.
+The implemented JSON path retrieves usage, demand intervals, reported cycle maxima and a
+projected total bill. It does not retrieve every My Account resource or actual itemized demand
+charges. `isAverageDemandRate` separates an average-demand plan from a maximum-demand plan;
+`payments/billprojection` supplies the projection and `demandList` supplies half-hour readings.
+A matched cycle maximum validates that kW statistic, not the E-15 average or a dollar charge.
+The standalone cycle-occurrence timestamp keeps SRP's supplied label; its endpoint meaning
+remains unverified, separately from the raw interval-start contract.
 
 So the reason to keep both is not capability, it is **failure mode**. A markup change breaks the
 scraper. A field rename breaks the JSON client. A Cloudflare mood breaks whichever one you happen

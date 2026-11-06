@@ -4,7 +4,7 @@ Notable changes to this project. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.2.4] — 2026-11-05
 
 ### Added
 - A Demand audit sensor compares complete E-15 peak half-hours with the utility's daily maxima
@@ -28,7 +28,7 @@ Notable changes to this project. Format loosely follows
 - Documentation and sample chart labels distinguish SRP's consumption and generation series
   from independently measured grid import and whole-roof production. November 2026 responses
   disprove the earlier claim that daily off-peak generation is always zero. The daily sensor
-  was documented as on-peak, but its sum-of-both-fields implementation required the Unreleased
+  was documented as on-peak, but its sum-of-both-fields implementation required the 1.2.4
   correction above. IDs and statistic sources are unchanged.
 
 ## [1.2.2] — 2026-11-04

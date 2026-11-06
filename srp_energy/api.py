@@ -20,6 +20,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.responses import HTMLResponse, PlainTextResponse
 
+from . import __version__
 from .config import Settings
 from .models import Series
 from .storage import Store
@@ -48,7 +49,7 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
 
     app = FastAPI(
         title="SRP Energy Monitor",
-        version="1.1.0",
+        version=__version__,
         summary="Read your Salt River Project demand and energy data over HTTP.",
         description=(
             "Salt River Project publishes residential usage only through their web "

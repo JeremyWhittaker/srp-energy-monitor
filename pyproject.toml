@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "srp-energy-monitor"
-version = "1.2.3"
-description = "Unofficial Salt River Project (SRP) API: demand charge, usage, solar and bill data as REST, Prometheus and Grafana."
+version = "1.2.4"
+description = "Unofficial Salt River Project (SRP) API: demand, usage, solar and bill projections as REST, Prometheus and Grafana."
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
