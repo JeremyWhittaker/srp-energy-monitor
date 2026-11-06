@@ -128,7 +128,15 @@ you can later reload or delete from the UI.
 | **Username** | The username you use at myaccount.srpnet.com. |
 | **Password** | That account's password. Stored by Home Assistant, sent only to SRP. |
 
-The form signs in to SRP before it accepts anything, so a typo is caught immediately. You may see
+To configure the demand audit after setup, open **Settings → Devices & Services → SRP Energy
+Monitor → Configure**. Choose **E-15 Average Demand** only when it matches the home's configured
+plan, or **Disabled**. Saving preserves credentials, account/entity IDs and unrelated options,
+then reloads the integration so the coordinator reads the choice. This declares configuration;
+it does not independently confirm SRP enrollment or actual billed demand charges. The options
+form itself does not validate credentials or make an extra utility request. The ordinary reload
+uses the integration's normal refresh. Unsupported or disabled plans keep the audit `unsupported`.
+
+The initial setup form signs in to SRP before it accepts anything, so a typo is caught immediately. You may see
 one of these messages:
 
 | Message | What it means |

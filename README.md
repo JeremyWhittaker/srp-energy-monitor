@@ -236,7 +236,9 @@ fail to build a wheel on a Raspberry Pi.
 | Daily net energy | kWh | The most recent settled day |
 
 The demand audit is enabled only by an explicit integration option
-`demand_audit_plan: E15`. Without that binding, or with another plan, its state is `unsupported`:
+`demand_audit_plan: E15`. Open the SRP integration's **Configure** options, select **E-15 Average
+Demand** and save. **Disabled** stops the audit; saving reloads the integration and preserves
+credentials and unrelated options. Without the E-15 binding, its state is `unsupported`:
 SRP's average-demand flag also covers E-16 and does not prove E-15 enrollment. The binding
 records the configured household policy; it does not independently confirm the account's plan.
 

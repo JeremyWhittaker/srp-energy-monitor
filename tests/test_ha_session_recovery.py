@@ -28,6 +28,7 @@ matching ``tests/test_service.py``.
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import json
 import re
@@ -610,14 +611,20 @@ def test_the_reauth_flow_can_actually_take_a_new_password(srp_api):
     than something remembered.
     """
     source = (COMPONENT / "config_flow.py").read_text()
+    config_class = next(node for node in ast.parse(source).body
+                        if isinstance(node, ast.ClassDef) and node.name == "SRPEnergyMonitorConfigFlow")
+    reauth_methods = [node for node in config_class.body if isinstance(node, ast.AsyncFunctionDef)
+                      and node.name in {"async_step_reauth", "async_step_reauth_confirm"}]
+    assert {node.name for node in reauth_methods} == {"async_step_reauth", "async_step_reauth_confirm"}
+    reauth = "\n".join(ast.get_source_segment(source, node) for node in reauth_methods)
 
-    assert re.search(r"async def async_step_reauth_confirm\b", source)
-    assert re.search(r"\bself\._get_reauth_entry\s*\(\s*\)", source)
-    assert re.search(r"\bself\.async_update_reload_and_abort\s*\(", source)
+    assert re.search(r"async def async_step_reauth_confirm\b", reauth)
+    assert re.search(r"\bself\._get_reauth_entry\s*\(\s*\)", reauth)
+    assert re.search(r"\bself\.async_update_reload_and_abort\s*\(", reauth)
     # The step must not fall back into the create-entry path that aborted.
-    reauth = source.split("async def async_step_reauth", 1)[1]
     assert "async_create_entry" not in reauth
     assert "_abort_if_unique_id_configured" not in reauth
+    assert "self.async_step_user(" not in reauth
 
 
 def test_every_flow_step_and_abort_reason_has_translated_text(srp_api):
@@ -629,24 +636,45 @@ def test_every_flow_step_and_abort_reason_has_translated_text(srp_api):
     better than one that aborts.
     """
     source = (COMPONENT / "config_flow.py").read_text()
-    steps = set(re.findall(r'step_id="([a-z_]+)"', source))
+    classes = {node.name: ast.get_source_segment(source, node) for node in ast.parse(source).body
+               if isinstance(node, ast.ClassDef)}
+    config_source = classes["SRPEnergyMonitorConfigFlow"]
+    options_source = classes["SRPEnergyMonitorOptionsFlow"]
+    steps = set(re.findall(r'step_id="([a-z_]+)"', config_source))
     assert steps == {"user", "reauth_confirm"}, steps
+    option_steps = set(re.findall(r'step_id="([a-z_]+)"', options_source))
+    assert option_steps == {"init"}, option_steps
+    option_fields = set(re.findall(r'vol\.Required\(\s*"([a-z_]+)"', options_source))
+    assert option_fields == {"demand_audit_plan"}
+    option_errors = set(re.findall(r'errors\[[^\]]+\]\s*=\s*"([a-z_]+)"', options_source))
+    assert option_errors == {"invalid_plan"}
 
     files = {}
     for name in ("strings.json", "translations/en.json"):
-        config = json.loads((COMPONENT / name).read_text())["config"]
-        files[name] = config
+        translations = json.loads((COMPONENT / name).read_text())
+        config = translations["config"]
+        options = translations["options"]
+        files[name] = translations
         assert steps <= set(config["step"]), (name, config["step"].keys())
         # async_update_reload_and_abort defaults its reason to this.
         assert "reauth_successful" in config["abort"], name
         # Every error key the flow can hand back must resolve to a sentence.
-        errors = set(re.findall(r'return "([a-z_]+)"', source)) | {"invalid_account"}
+        errors = set(re.findall(r'return "([a-z_]+)"', config_source)) | {"invalid_account"}
         assert errors <= set(config["error"]), (name, errors - set(config["error"]))
+        assert option_steps <= set(options["step"]), name
+        assert option_errors <= set(options["error"]), name
+        assert all(options["error"][key].strip() for key in option_errors), name
+        for step in option_steps:
+            translated = options["step"][step]
+            assert translated["title"].strip() and translated["description"].strip(), name
+            assert option_fields <= set(translated["data"]), name
+            assert all(translated["data"][key].strip() for key in option_fields), name
 
     # Every {placeholder} in the reauth text must be one the flow supplies, or
     # the dialog renders the literal braces at the user.
-    supplied = set(re.findall(r'description_placeholders=\{"([a-z_]+)"', source))
-    for name, config in files.items():
+    supplied = set(re.findall(r'description_placeholders=\{"([a-z_]+)"', config_source))
+    for name, translations in files.items():
+        config = translations["config"]
         used = set(re.findall(r"\{([a-z_]+)\}", config["step"]["reauth_confirm"]["description"]))
         assert used <= supplied, (name, used - supplied)
 

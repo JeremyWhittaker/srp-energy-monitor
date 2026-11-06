@@ -37,6 +37,16 @@
       "reauth_successful": "Signed in again. Polling has resumed and the sensors will refresh shortly."
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Demand audit",
+        "description": "Select E-15 only when it matches the plan configured for this home. This records your configuration; it does not independently confirm SRP account enrollment or actual billed charges. Saving reloads the integration without changing credentials.",
+        "data": { "demand_audit_plan": "Demand audit plan" }
+      }
+    },
+    "error": { "invalid_plan": "Choose Disabled or E-15 Average Demand." }
+  },
   "entity": {
     "sensor": {
       "demand_audit": { "name": "Demand audit" },

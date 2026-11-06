@@ -25,8 +25,9 @@ from collections.abc import Mapping
 from typing import Any
 
 import voluptuous as vol
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
+from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 
 from .const import CONF_ACCOUNT_ID, DOMAIN, LOGGER
@@ -58,6 +59,12 @@ class SRPEnergyMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
     """Collect credentials and prove they work before creating the entry."""
 
     VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
+        """Let Home Assistant bind the entry after constructing the handler."""
+        return SRPEnergyMonitorOptionsFlow()
 
     async def _validate(self, account: str, username: str, password: str) -> str | None:
         """Round-trip one set of credentials. Returns an error key, or None on success.
@@ -180,5 +187,36 @@ class SRPEnergyMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
                 user_input or {CONF_USERNAME: entry.data[CONF_USERNAME]},
             ),
             description_placeholders={"account": account},
+            errors=errors,
+        )
+
+
+class SRPEnergyMonitorOptionsFlow(OptionsFlow):
+    """Choose the audit's declared plan without changing account credentials."""
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Preserve unrelated options; framework saves the result and reloads."""
+        current = self.config_entry.options
+        selected = current.get("demand_audit_plan", "disabled")
+        if selected not in ("disabled", "E15"):
+            selected = "disabled"
+        errors = {}
+        if user_input is not None:
+            selected = user_input.get("demand_audit_plan")
+            if selected in ("disabled", "E15"):
+                return self.async_create_entry(
+                    title="", data={**current, "demand_audit_plan": selected}
+                )
+            errors["demand_audit_plan"] = "invalid_plan"
+            selected = "disabled"
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema({
+                vol.Required("demand_audit_plan", default=selected): vol.In({
+                    "disabled": "Disabled", "E15": "E-15 Average Demand",
+                }),
+            }),
             errors=errors,
         )
