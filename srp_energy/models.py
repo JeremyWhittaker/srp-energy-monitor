@@ -94,14 +94,14 @@ class DailyReading:
 class DemandObservation:
     """The headline demand figure SRP shows for the current bill cycle.
 
-    A live scrape of one number, not a CSV row. Its *meaning depends on the
-    account's price plan*, so the on-page caption is captured alongside the
-    value rather than assumed:
+    A current-cycle observation from the portal or reconstructed daily data,
+    not a final bill or a demand-charge dollar amount. Its meaning depends on
+    the account's price plan, so its caption is retained alongside the value:
 
     * On an average-demand plan (e.g. "Customer Generation Avg Demand Plan")
       the card reads "Current Average On-Peak Demand" and the number is the
       mean on-peak demand across the cycle so far.
-    * On a peak-demand plan (E-27 / E-28) it is the highest on-peak demand
+    * On a peak-demand plan (E-27) it is the highest on-peak demand
       recorded in the cycle.
 
     Treating one as the other silently misreports the number that drives the
@@ -169,17 +169,16 @@ class IntervalReading:
 
 @dataclass(frozen=True, slots=True)
 class CyclePeak:
-    """The demand figure a single billing cycle was charged on.
+    """The reported maximum on-peak demand in kW for one billing cycle.
 
-    On a demand plan this is the number that moves the bill, and it is not
-    derivable from the hourly series: SRP bills the highest **half-hour** of
-    on-peak demand, while hourly data averages two half-hours together. On this
-    account the hourly approximation has landed anywhere from 2% to 39% below
-    the billed figure depending on how hard load ramped inside the hour, so the
-    two are stored separately rather than one being computed from the other.
+    A peak-demand plan uses the cycle maximum; an E-15/E-16 average-demand
+    plan instead uses a mean of daily maxima. This record does not contain
+    billed demand dollars or an actual invoice. The reported maximum is kept
+    separately because an hourly mean cannot reconstruct a shorter interval's
+    maximum.
 
-    ``is_average_demand_rate`` records which quantity the plan bills, taken
-    from SRP's own boolean rather than inferred from a caption:
+    ``is_average_demand_rate`` is SRP's payload-level plan-type flag, not
+    independent proof of the plan used for each historical bill:
 
     * ``True``  -- an average-demand plan (E-15, E-16); the charge follows a
       mean of daily maxima
@@ -187,9 +186,10 @@ class CyclePeak:
       maximum
 
     ``occurred_at`` is naive Arizona local time, matching ``IntervalReading``.
-    SRP labels the interval by the moment it *ends*, so a peak reported at
-    20:00 is the 19:30-20:00 half hour -- the last one inside a summer on-peak
-    window that closes at 20:00.
+    The endpoint convention of this cycle-maximum occurrence field remains
+    unverified. Preserve SRP's reported time without calling it a start or
+    end. Raw demandList slot timestamps have a separately checked start-label
+    contract; this occurrence field must not shift those slots.
     """
 
     cycle_start: date

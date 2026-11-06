@@ -133,16 +133,15 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
     @app.get(
         f"{API_PREFIX}/cycle-peaks",
         tags=["demand"],
-        summary="The demand figure each billing cycle was charged on",
+        summary="Reported maximum on-peak demand in kW for each billing cycle",
     )
     def cycle_peaks(limit: int = Query(24, ge=1, le=500)) -> dict[str, Any]:
-        """Billed demand peaks, newest cycle first.
+        """Reported cycle maxima in kW, newest cycle first.
 
-        This is the single highest on-peak half hour of each cycle -- the
-        figure the demand charge is computed from. On an average-demand plan it
-        is a *different quantity* from the headline figure at
-        ``/api/v1/demand``, which is a mean. Both are served because reporting
-        one as the other misstates the bill; check ``is_average_demand_rate``.
+        On E-15/E-16 this maximum differs from the mean of daily maxima used
+        for billing. The latest reconstructed mean is at ``/api/v1/demand``;
+        check ``is_average_demand_rate`` before comparing quantities. This
+        endpoint does not provide actual billed demand-charge dollars.
         """
         rows = store.cycle_peaks(limit=limit)
         return {"count": len(rows), "unit": "kW", "peaks": [r.to_dict() for r in rows]}

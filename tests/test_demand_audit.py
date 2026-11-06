@@ -258,3 +258,33 @@ def test_refresh_time_not_hash_and_future_day_never_matches(modules):
         datetime(2026, 11, 5, 5, tzinfo=ZONE), plan_code="E15", timestamp_start_verified=True)
     assert future["state"] == "incomplete"
     assert "requested_unsettled_day" in future["issues"]
+
+
+@pytest.mark.parametrize(("on_peak", "expected"), [(3.0, 3.0), (0.0, 0.0), (None, None)])
+def test_actual_refresh_daily_generation_is_on_peak_only(monkeypatch, on_peak, expected):
+    harness = importlib.import_module("test_ha_statistics_restatements")
+    _coordinator, owner, _recorder = harness.component.__wrapped__(monkeypatch)
+    payload = {
+        "dailyGenerationList": [{"date": "2026-11-03", "offPeak": 19, "onPeak": on_peak}],
+        "dailyConsumptionList": [{"date": "2026-11-03", "offPeak": 4, "onPeak": 6}],
+        "dailyReadList": [{"date": "2026-11-03", "offPeakKwh": 7, "onPeakKwh": 1}],
+    }
+    statistics_inputs = []
+
+    class Client:
+        async def daily_detail(self):
+            return payload
+
+        async def projection(self):
+            return {"hasProjection": False}
+
+    async def unchanged_statistics(daily_payload):
+        statistics_inputs.append(daily_payload)
+        return {"state": "incomplete"}
+
+    owner._client = Client()
+    owner._async_update_statistics = unchanged_statistics
+    result = asyncio.run(owner._async_update_data())
+    assert result.daily_totals == {"generation": expected, "usage": 10, "net": 8}
+    assert statistics_inputs == [payload]  # Hourly source path is not modified.
+    assert payload["dailyGenerationList"][0]["offPeak"] == 19

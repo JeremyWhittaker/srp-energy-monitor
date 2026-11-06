@@ -227,7 +227,7 @@ fail to build a wheel on a Raspberry Pi.
 
 | Sensor | Unit | What it is |
 |---|---|---|
-| Current demand | kW | What SRP prints for the cycle in progress — an average on E-15/E-16, a maximum on E-27. The `is_average` attribute says which. |
+| Current demand | kW | A cycle mean reconstructed from published daily maxima on E-15/E-16, or SRP’s cycle maximum on E-27. The `is_average` attribute says which; it is not a billed-dollar line. |
 | Billed cycle peak | kW | The single highest on-peak half hour of the cycle, with the timestamp it happened |
 | Bill projection | USD | SRP's own projection for this cycle |
 | Demand audit | — | Whether SRP's completed daily maxima agree with its already fetched half-hour data; coverage and caveats are in the attributes |

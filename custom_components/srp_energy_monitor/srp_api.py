@@ -165,7 +165,7 @@ class SRPAccessBlocked(SRPApiError):
 
 @dataclass(frozen=True, slots=True)
 class CyclePeak:
-    """The demand figure one billing cycle was charged on."""
+    """Reported cycle maximum in kW; average-plan means and billed USD are separate."""
 
     cycle_start: date
     cycle_end: date

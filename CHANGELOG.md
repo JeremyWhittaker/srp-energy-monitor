@@ -4,6 +4,20 @@ Notable changes to this project. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- A Demand audit sensor compares complete E-15 peak half-hours with the utility's daily maxima
+  using the existing fetch. It requires an explicit E-15 configuration, reports missing evidence,
+  retains exact winning intervals and stable content checksums, and does not claim billed costs.
+
+### Fixed
+- Daily on-peak generation now uses only the daily on-peak field. Earlier code summed the daily
+  off-peak field too, contrary to its label; the discrepancy becomes visible when off-peak values
+  are nonzero. Its entity ID is unchanged. Hourly generation statistics and history are untouched.
+- API, model and storage descriptions identify cycle peaks as reported kW maxima, distinct from
+  E-15/E-16 averaged daily maxima and actual demand-charge dollars, which are not retrieved.
+
 ## [1.2.3] — 2026-11-05
 
 ### Fixed
@@ -14,7 +28,8 @@ Notable changes to this project. Format loosely follows
 - Documentation and sample chart labels distinguish SRP's consumption and generation series
   from independently measured grid import and whole-roof production. November 2026 responses
   disprove the earlier claim that daily off-peak generation is always zero. The daily sensor
-  continues to use only the on-peak field; IDs and statistic sources are unchanged.
+  was documented as on-peak, but its sum-of-both-fields implementation required the Unreleased
+  correction above. IDs and statistic sources are unchanged.
 
 ## [1.2.2] — 2026-11-04
 

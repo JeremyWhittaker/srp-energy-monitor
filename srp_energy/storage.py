@@ -73,10 +73,10 @@ CREATE TABLE IF NOT EXISTS bill_projection (
     source      TEXT
 );
 
--- The demand figure each billing cycle was actually charged on, keyed by the
--- cycle rather than by an observation time: SRP restates the current cycle's
--- peak upward as the cycle runs, and re-fetching should correct that row, not
--- append a second one. Closed cycles never change again.
+-- Reported cycle maximum in kW, keyed by cycle rather than observation time.
+-- Average-plan billing follows a separate mean of daily maxima; no billed
+-- dollar line items are stored here. New utility revisions replace the
+-- cycle's previous reading instead of appending another copy.
 CREATE TABLE IF NOT EXISTS cycle_peak (
     cycle_start            TEXT PRIMARY KEY,
     cycle_end              TEXT NOT NULL,
@@ -271,7 +271,7 @@ class Store:
             )
 
     def upsert_cycle_peaks(self, peaks: Iterable[CyclePeak]) -> int:
-        """Insert or update billed demand peaks. Returns the number written."""
+        """Upsert reported cycle maxima in kW. Returns the number written."""
         rows = [
             (
                 p.cycle_start.isoformat(),
@@ -292,10 +292,8 @@ class Store:
                     (cycle_start, cycle_end, on_peak_high_demand_kw,
                      occurred_at, is_average_demand_rate, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?)
-                -- The open cycle's peak only ever climbs, so a plain
-                -- assignment is right here: the newest fetch is authoritative.
-                -- Unlike the daily tables there is no partial-parse hazard --
-                -- a peak is one number, present or absent.
+                -- Replace with the newest published cycle reading, including
+                -- corrections; do not assume a utility revision only rises.
                 ON CONFLICT(cycle_start) DO UPDATE SET
                     cycle_end              = excluded.cycle_end,
                     on_peak_high_demand_kw = excluded.on_peak_high_demand_kw,
@@ -310,7 +308,7 @@ class Store:
     # -------------------------------------------------------------- reading
 
     def cycle_peaks(self, limit: int | None = None) -> list[CyclePeak]:
-        """Billed demand peaks, newest cycle first."""
+        """Reported cycle maxima in kW, newest cycle first; no billed USD."""
         sql = "SELECT * FROM cycle_peak ORDER BY cycle_start DESC"
         params: list[object] = []
         if limit is not None:

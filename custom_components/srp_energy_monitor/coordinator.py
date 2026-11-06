@@ -198,7 +198,7 @@ class SRPData:
     cycle_peak: CyclePeak | None = None
     projection_usd: float | None = None
     latest_day: date | None = None
-    daily_totals: dict[str, float] | None = None
+    daily_totals: dict[str, float | None] | None = None
     demand_audit: dict | None = None
 
 
@@ -290,7 +290,8 @@ class SRPCoordinator(DataUpdateCoordinator[SRPData]):
 
         latest_day = max((d.day for d in daily), default=None)
         totals = {
-            d.series: d.total for d in daily if latest_day is not None and d.day == latest_day
+            d.series: d.on_peak if d.series == "generation" else d.total
+            for d in daily if latest_day is not None and d.day == latest_day
         }
 
         checked_at = datetime.now(PHOENIX)
