@@ -60,6 +60,7 @@ from .const import (
     STAT_NET,
     UPDATE_INTERVAL,
 )
+from .demand_audit import build_demand_audit
 from .srp_api import (
     CyclePeak,
     Interval,
@@ -198,6 +199,7 @@ class SRPData:
     projection_usd: float | None = None
     latest_day: date | None = None
     daily_totals: dict[str, float] | None = None
+    demand_audit: dict | None = None
 
 
 class SRPCoordinator(DataUpdateCoordinator[SRPData]):
@@ -207,6 +209,9 @@ class SRPCoordinator(DataUpdateCoordinator[SRPData]):
 
     def __init__(self, hass: HomeAssistant, entry: SRPConfigEntry) -> None:
         self.account_id: str = entry.data[CONF_ACCOUNT_ID]
+        # Explicit configuration, not an inference from isAverageDemandRate:
+        # that flag also covers E-16's different interval and peak contract.
+        self._demand_audit_plan = entry.options.get("demand_audit_plan")
         # async_create_clientsession, not async_get_clientsession. The latter
         # hands out Home Assistant's *shared* session, and a shared session
         # means a shared cookie jar. SRP's entire notion of being logged in is
@@ -288,8 +293,15 @@ class SRPCoordinator(DataUpdateCoordinator[SRPData]):
             d.series: d.total for d in daily if latest_day is not None and d.day == latest_day
         }
 
+        checked_at = datetime.now(PHOENIX)
+        audit = build_demand_audit(
+            daily_payload, [], checked_at.date() - timedelta(days=7),
+            checked_at.date() - timedelta(days=1), checked_at,
+            plan_code=getattr(self, "_demand_audit_plan", None),
+            fetch_complete=False, fetch_issue="interval_fetch_not_completed",
+        )
         try:
-            await self._async_update_statistics(daily_payload)
+            audit = await self._async_update_statistics(daily_payload)
         except SRPApiError as err:
             # History is a bonus; never fail the sensors over it.
             LOGGER.warning("statistics update skipped: %s", err)
@@ -301,22 +313,37 @@ class SRPCoordinator(DataUpdateCoordinator[SRPData]):
             projection_usd=parse_projection(projection_payload),
             latest_day=latest_day,
             daily_totals=totals,
+            demand_audit=audit,
         )
 
     # ------------------------------------------------------------ statistics
 
-    async def _async_update_statistics(self, daily_payload: dict) -> None:
+    async def _async_update_statistics(self, daily_payload: dict) -> dict:
         """Refresh settled intervals, including recent utility restatements."""
         start = await self._async_statistics_start()
         end = datetime.now(PHOENIX).date() - timedelta(days=1)
         if start > end:
             LOGGER.debug("statistics already current through %s", end)
-            return
+            return build_demand_audit(
+                daily_payload, [], start, end, datetime.now(PHOENIX),
+                plan_code=getattr(self, "_demand_audit_plan", None), fetch_complete=False,
+                fetch_issue="no_completed_interval_fetch",
+            )
 
         LOGGER.debug("fetching intervals %s .. %s for statistics", start, end)
         intervals = await self._client.intervals(start, end)
+        audit = build_demand_audit(
+            daily_payload, getattr(self._client, "demand_audit_rows", []),
+            start, end, datetime.now(PHOENIX),
+            plan_code=getattr(self, "_demand_audit_plan", None),
+            # Actual E-15 raw demandList boundary evidence, Nov 5 2026:
+            # 05:00/05:30 on-peak; 09:00 off-peak. Cycle peak timestamps
+            # are a separate field and must not shift these slot starts.
+            timestamp_start_verified=True,
+            fetch_complete=getattr(self._client, "demand_audit_fetch_complete", False),
+        )
         if not intervals:
-            return
+            return audit
 
         for series, (suffix, label) in _ENERGY_STATS.items():
             try:
@@ -324,6 +351,7 @@ class SRPCoordinator(DataUpdateCoordinator[SRPData]):
             except SRPApiError as err:
                 LOGGER.warning("statistics replay skipped for %s: %s", suffix, err)
         await self._async_write_demand(intervals)
+        return audit
 
     async def _async_statistics_start(self) -> date:
         """Revisit recent settled days and gaps, or backfill a new installation.

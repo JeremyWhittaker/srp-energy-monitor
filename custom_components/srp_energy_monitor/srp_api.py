@@ -446,6 +446,8 @@ class SRPClient:
         self._account = account_id
         self._xsrf: str | None = None
         self._lock = asyncio.Lock()
+        self.demand_audit_rows: list[dict[str, Any]] = []
+        self.demand_audit_fetch_complete = False
 
     async def _request(
         self, path: str, *, data: dict[str, str] | None = None, params: dict[str, str] | None = None
@@ -697,6 +699,9 @@ class SRPClient:
         """Interval readings over any range, chunked so nothing is dropped."""
         out: list[Interval] = []
         async with self._lock:
+            self.demand_audit_rows = []
+            self.demand_audit_fetch_complete = False
+            audit_rows: list[dict[str, Any]] = []
             await self._ensure_session()
             for window_start, window_end in chunk_date_range(start, end):
                 payload = await self._request(
@@ -707,7 +712,18 @@ class SRPClient:
                         "endDate": window_end.strftime("%m-%d-%Y"),
                     },
                 )
+                # Keep only demand evidence from this existing request. Publish
+                # atomically after every window succeeds; never reuse old rows.
+                for row in payload.get("demandList") or []:
+                    audit_rows.append(
+                        {key: row[key] for key in (
+                            "date", "hour", "intervalTimeInMinutes", "onPeakDemand",
+                            "unit", "unitOfMeasurement", "unit_of_measurement",
+                        ) if key in row} if isinstance(row, dict) else {}
+                    )
                 out.extend(parse_intervals(payload))
                 # A backfill is ~25 windows against someone else's site.
                 await _SLEEP(0.5)
+            self.demand_audit_rows = audit_rows
+            self.demand_audit_fetch_complete = True
         return out

@@ -223,16 +223,39 @@ It talks to SRP directly over SRP's JSON API. That means no browser on the Home 
 and `"requirements": []` in the manifest — nothing is installed at setup time, so nothing can
 fail to build a wheel on a Raspberry Pi.
 
-### Six sensors
+### Sensors
 
 | Sensor | Unit | What it is |
 |---|---|---|
 | Current demand | kW | What SRP prints for the cycle in progress — an average on E-15/E-16, a maximum on E-27. The `is_average` attribute says which. |
 | Billed cycle peak | kW | The single highest on-peak half hour of the cycle, with the timestamp it happened |
 | Bill projection | USD | SRP's own projection for this cycle |
+| Demand audit | — | Whether SRP's completed daily maxima agree with its already fetched half-hour data; coverage and caveats are in the attributes |
 | Daily consumption | kWh | SRP's consumption series for the most recent settled day |
 | Daily on-peak generation | kWh | The most recent settled day, **on-peak only** — see the warning below |
 | Daily net energy | kWh | The most recent settled day |
+
+The demand audit is enabled only by an explicit integration option
+`demand_audit_plan: E15`. Without that binding, or with another plan, its state is `unsupported`:
+SRP's average-demand flag also covers E-16 and does not prove E-15 enrollment. The binding
+records the configured household policy; it does not independently confirm the account's plan.
+
+The audit reuses the normal four-hour utility refresh and checks at most seven completed Arizona
+days. It checks settled reports, rather than providing a real-time meter warning.
+Every expected E-15 peak half-hour must be present: 12 in summer or 16 in winter, excluding
+weekends and SRP's six holidays. Real zero-demand weekdays count. Missing, conflicting,
+nonfinite, negative, wrong-width or incompatible-unit readings produce `incomplete`; a complete
+comparison is `matches` or `mismatch`, with a 0.05 kW daily-rounding allowance. These are two
+related utility reports, not independent meter calibration. Raw demand timestamps use the
+verified start-label contract; the separate cycle-maximum occurrence field is not substituted.
+
+Attributes retain each day's coverage, both maxima, the exact earliest winning half-hour and
+tie count, latest complete day, source caveats and a canonical content checksum. The checksum
+ignores refresh time and response order, but changes when a retained source value changes.
+Derived historical cycle means require every eligible daily value and explicitly retain
+unverified historical plan identity. Only the displayed replay days were checked against
+intervals. Actual invoice demand-charge dollars are not collected: `billed_cost_verified` is
+always false. Existing cycle-maximum and bill-projection sensors keep their separate meanings.
 
 ### Years of history, back-filled on day one
 

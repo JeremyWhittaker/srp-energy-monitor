@@ -54,6 +54,13 @@ def _daily(series: str) -> Callable[[SRPData], StateType]:
 
 SENSORS: tuple[SRPSensorDescription, ...] = (
     SRPSensorDescription(
+        key="demand_audit",
+        translation_key="demand_audit",
+        icon="mdi:check-decagram-outline",
+        value_fn=lambda d: (d.demand_audit or {}).get("state", "incomplete"),
+        attrs_fn=lambda d: {key: value for key, value in (d.demand_audit or {}).items() if key != "state"},
+    ),
+    SRPSensorDescription(
         key="current_demand",
         translation_key="current_demand",
         device_class=SensorDeviceClass.POWER,
@@ -106,15 +113,9 @@ SENSORS: tuple[SRPSensorDescription, ...] = (
     # nonsense. The real history lives in the external statistics the
     # coordinator writes.
     #
-    # Generation is the one that needs its name qualified. SRP's
-    # ``dailyConsumptionList`` and ``dailyReadList`` agree with the hourly
-    # lists to within a rounding step, but ``dailyGenerationList`` does not:
-    # it leaves the off-peak column at zero and reports only the on-peak leg,
-    # which is why it reads 0 on weekends while the array is plainly still
-    # producing. Measured on 2026-08-27: 21 kWh here against 84.5 kWh summed
-    # from ``hourlyGenerationList``. Total production is the
-    # ``energy_generation`` statistic; this entity is the on-peak leg SRP
-    # nets against on-peak consumption, and it is named for that.
+    # The generation entity deliberately retains only the daily on-peak field.
+    # Daily off-peak values can be nonzero; hourly portal generation is a
+    # separate series with unverified whole-roof physical coverage.
     SRPSensorDescription(
         key="daily_consumption",
         translation_key="daily_consumption",

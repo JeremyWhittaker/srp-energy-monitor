@@ -39,6 +39,7 @@
   },
   "entity": {
     "sensor": {
+      "demand_audit": { "name": "Demand audit" },
       "current_demand": { "name": "Current demand" },
       "billed_cycle_peak": { "name": "Billed cycle peak" },
       "bill_projection": { "name": "Bill projection" },
