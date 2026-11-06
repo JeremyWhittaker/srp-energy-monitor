@@ -1,217 +1,146 @@
-# Notes for whoever works on this next
+# SRP owner notes
 
-Operational context that isn't obvious from the code or the README. Read this
-before changing the scraper.
+Read [README.md](README.md) and the [Home Assistant guide](docs/HOME-ASSISTANT.md)
+before changing collection or billing behavior. Follow the repository's AGENTS.md
+and Jeremy's Foreman, privacy, privilege and shipping rules. These notes describe
+source behavior, not a fresh health check of an installed household system.
 
-## What this is, in one line
+## Scope and separation
 
-Browser automation against Salt River Project's customer portal, because SRP
-offers no API for residential accounts. Everything else in the repo exists to
-make that fragile thing survivable.
+This repository owns the standalone SRP collector, SQLite store, read API and
+`custom_components/srp_energy_monitor`. The HA integration talks to SRP directly;
+it does not require the standalone database or web service.
 
-## The load-bearing design decision
+There are two collection paths:
 
-**Only `client.py` imports Playwright.** Parsing, storage, the API and the CLI
-work entirely on saved CSVs. When SRP changes their markup — and they have,
-twice, during the few days this was written — the scraper breaks while the API
-keeps serving the history already collected.
+- `client.py` uses Playwright for SRP's portal and CSV exports.
+- `jsonapi.py` uses the portal's **undocumented private JSON API**. This is not
+  an official public API contract, and field names or access rules can change.
+  The HA component has its own async client in `srp_api.py`.
 
-Keep it that way. If you find yourself importing Playwright anywhere else,
-that's the bug.
+Only `client.py` imports Playwright. Keep parsing, persistence and the HA component
+browser-free. The duplicated package/component parsing rules are intentional:
+change both when applicable and preserve `tests/test_component_parity.py`.
 
-The corollary: every selector is a *cascade* of candidates, not one string, and
-the ordering is "currently observed to work" first. Selectors recovered from
-older versions of the portal are kept as fallbacks even when they look dead —
-one of them (`input[name="UserName"]`, from a script that had been written off
-as superseded) turned out to be current markup.
+For browser maintenance, retain observed selector fallbacks and require visible
+login fields. Authentication checks must inspect the URL path, not match the
+portal hostname. Confirm the selected chart before exporting; refuse an
+unconfirmed chart instead of storing a mislabeled download.
 
-## Three bugs that were expensive to find
+## Quantities that must remain separate
 
-Each was invisible until the code ran against the live site. If you are
-reviewing a change here, these are the shapes of mistake to look for.
+- **E-15:** mean of eligible daily maximum 30-minute on-peak demand values.
+- **E-16:** mean of daily maximum 60-minute on-peak demand values.
+- **E-27:** the cycle's maximum 30-minute on-peak demand.
+- `CyclePeak` / `highDemandInfoList.onPeakHighDemand` is a reported **kW maximum**.
+  On an average-demand plan it is not the billed mean or a dollar charge.
+- The current JSON average is reconstructed from daily maxima. A portal caption,
+  derived mean, cycle maximum and final billed demand are not interchangeable.
+- `payments/billprojection` provides a projected total bill. Actual invoice
+  line items and historical demand-charge dollars are not currently collected.
 
-1. **Login was being skipped entirely.** `_looks_authenticated` matched
-   `"myaccount"` against the whole URL — but the portal's *hostname* is
-   `myaccount.srpnet.com`, so every page including the login page looked
-   authenticated. It now examines only the path. Lesson: never substring-match
-   a URL when the host contains the token you're looking for.
+`isAverageDemandRate` distinguishes average versus maximum plan types; it does
+not identify E-15 rather than E-16 or prove historical enrollment for each cycle.
+The E-15 audit therefore requires the explicit `demand_audit_plan: E15` option.
+Configure it through the supported options flow; Disabled or an unsupported plan
+keeps the audit unsupported. Saving preserves other options and credentials and
+reloads the existing entry. Never edit live `.storage` or substitute a generic
+config-entry update for the options flow.
 
-2. **The headline demand figure was mislabelled a peak.** It is captioned
-   "Current Average On-Peak Demand" on this account — a cycle *mean*, because
-   the plan is an average-demand plan. Per SRP's own November 2025 tariffs,
-   E-27 (Customer Generation) bills the single highest 30-minute on-peak kW --
-   a true maximum -- while E-15 (Average Demand) and E-16 (Manage Demand
-   5-10 p.m.) bill an *average* of daily maxima. E-28, E-13, E-14, E-21, E-23,
-   E-24 and E-26 have no demand charge at all.
+Average-demand calculations exclude weekends and the six SRP holidays: observed
+New Year's Day, Memorial Day, observed Independence Day, Labor Day, Thanksgiving
+and observed Christmas. Include December 31 observance of next year's New Year.
+Ordinary zero-demand weekdays remain in the denominator; MLK Day and Black Friday
+are not SRP holidays. The rule follows tariff wording; a holiday-containing bill
+remains a separate financial reconciliation gate. See the
+[tariff evidence and limits](README.md#which-plans-charge-for-demand).
 
-   So the caption is scraped and stored alongside the value (`label`,
-   `is_average`); nothing in the codebase may assume which one it is. Reporting
-   an average as a peak understated the real maximum by more than 2x (5.4 vs
-   12.7 kW). Note SRP restructured the plan lineup in November 2025 and will
-   again -- do not hard-code plan codes anywhere in the scraper.
+## Source mappings and interval evidence
 
-3. **Demand intervals were silently discarded.** That export is headed
-   `Off-peak kW` / `On-peak kW`; the parser matched only the kWh spellings, so
-   all 48 half-hours parsed to `None` and stored blank with no error. The
-   parser now selects columns by series *and* raises when a row has a valid
-   timestamp but no value in either expected column. Prefer failing loudly over
-   storing blanks — that is the whole reason this one hid.
+| Series | JSON daily list | JSON interval list |
+| --- | --- | --- |
+| `usage` | `dailyConsumptionList` | `hourlyConsumptionList` |
+| `generation` | `dailyGenerationList` | `hourlyGenerationList` |
+| `net` | `dailyReadList` | `hourlyUsageList` |
+| `demand` | `dailyDemandList` | `demandList` |
 
-## SRP facts worth knowing before you touch the scraper
+Do not call `hourlyUsageList` consumption. SRP generation is a portal series with
+unverified whole-roof coverage; do not add it to inverter totals as another array.
+The daily generation sensor deliberately exposes **on-peak only**. Its off-peak
+field can be nonzero; do not add it to that sensor or rewrite hourly history to
+make unlike quantities agree.
 
-- **There is a private JSON API** at `myaccount.srpnet.com/myaccountapi/api/...`
-  that the `srpenergy` PyPI package calls with no browser at all. It is
-  undocumented and unversioned. `jsonapi.py` is now a second backend over it;
-  the portal scraper stays because the CSV export is a contract SRP publishes
-  to its customers, and because the two paths fail differently -- markup
-  changes break one, a field rename breaks the other.
+Demand is kW; energy is kWh. The observed E-15 `demandList` contract has 30-minute,
+**start-labeled** slots. The cycle-maximum occurrence is a different field; its
+timestamp convention must not shift raw demand slots. Preserve period width,
+timezone and evidence of the timestamp role. Do not apply an unverified universal
+end-label rule, or silently treat E-16 as half-hourly.
 
-  The old note here said the `demandList` question was "unverified and worth an
-  afternoon". It is answered, and the answer was better than hoped:
+The demand audit reuses the existing fetch and checks at most seven completed
+Arizona days. Require every eligible peak slot, finite nonnegative demand,
+compatible units, valid timestamps and unambiguous duplicates. Missing is not
+zero. Preserve genuine zeros, the earliest exact winning half-hour and tie count.
+States are `matches`, `mismatch`, `incomplete` or `unsupported`; related-source
+agreement and a stable content hash do not verify an invoice. Derived historical
+cycle means retain explicit coverage and plan-history limits.
 
-  - `demandList` **is** populated on a demand-plan account -- 48 half-hourly kW
-    rows a day, in the very response `srpenergy` already receives and discards
-    on the line `hourly_usage_list = data["hourlyUsageList"]`.
-  - `max(onPeakDemand)` over a billing cycle equals the billed demand charge
-    exactly. Checked against SRP's own `highDemandInfoList`: 12.7 kW in the
-    half hour ending 2026-08-18T20:00, both figures agreeing to the interval.
-    SRP stamps a half hour with the time it ends, so that row is the
-    19:30-20:00 interval and 20:00 is what `occurred_at` reports.
-  - The bill projection is a JSON field too (`payments/billprojection`), and
-    `isAverageDemandRate` is a boolean, so **neither of the two "rendered UI
-    only" values actually requires a browser.** That was the load-bearing claim
-    in the README's "why a browser" section and it did not survive contact with
-    the API.
-  - Daily history reaches back **more than 800 days** in one call, against ~31 from the
-    portal export, and hourly reaches back at least to 2024-08.
+## Retention, revisions and database
 
-- **Three JSON traps, all of which fail quietly rather than loudly:**
+Chunk JSON hourly requests into at most 31-day windows: a larger HTTP 200 response
+can silently contain only the latest month. Daily/interval availability varies
+by account and date; observed multi-year history is not an all-time guarantee.
+HA initially requests 760 days, then replays seven completed Phoenix days and any
+collection gap. Older missing/corrupt history needs a backed-up targeted repair.
 
-  1. **Ranges wider than ~31 days truncate silently.** `usage/hourlydetail`
-     answers a two-year request with HTTP 200 and the most recent month. No
-     error, no warning, no indication anything was dropped. `chunk_date_range`
-     exists solely for this; never call `hourly_detail_window` directly across
-     a wide range.
-  2. **SRP's list names do not match its own CSV series names.** Established by
-     fetching both paths for the same days and diffing every value:
+Preserve exact timestamps/statistic IDs and a known preceding cumulative total
+when revising energy. Replace revised hourly states and rebuild the affected
+tail; repeating an unchanged import must not add the last hour again. Refuse
+ambiguous duplicates, missing baselines, invalid values and unsettled/future
+rows. Never assume utility revisions only rise or that closed cycles cannot
+change. A checksum detects changed evidence; it does not establish its meaning.
 
-     | CSV series | JSON daily list | JSON hourly list |
-     |---|---|---|
-     | `usage` | `dailyConsumptionList` | `hourlyConsumptionList` |
-     | `generation` | `dailyGenerationList` | `hourlyGenerationList` |
-     | `net` | `dailyReadList` | **`hourlyUsageList`** |
-     | `demand` | `dailyDemandList` | `demandList` |
+Standalone SQLite uses **schema 5**, with `daily_reading`, `interval_reading`,
+`demand_observation`, `bill_projection`, `cycle_peak` and `meta`. Reading/interval
+imports upsert; cycle maxima are keyed by cycle; demand/projection observations
+are keyed by observation time. Preserve migrations in `Store._migrate`. There is
+no invoice/demand-dollar ledger. The HA integration stores its own sensors and
+Recorder statistics, not this SQLite database.
 
-     The list called "usage" is *net* metered energy. Anything summing
-     `hourlyUsageList` and calling it consumption -- Home Assistant's built-in
-     `srp_energy` integration does exactly this -- reports a different quantity
-     than the bill's kWh line. On this account the two differ by ~8 kWh/day.
-  3. **Without the `x-xsrf-token` header every usage endpoint returns 403**,
-     which looks identical to the Cloudflare block. Fetch
-     `login/antiforgerytoken` after `login/authorize` and echo the cookie back.
+## Authentication and privacy
 
-- **A 403 is not an auth failure and not reliably a property of the host.**
-  Within one hour on one network: `requests` refused, `curl` refused, stdlib
-  `urllib` succeeded, and a second host accepted all three. Treat it as "not
-  this time, from here" -- retry, change machine, or fall back to the browser.
-  `AccessBlocked` exists so this never gets misreported as bad credentials.
+Standalone credentials are configured through the existing secret settings;
+keep `.env` gitignored and mode 0600. HA credentials remain in its config entry.
+Never commit or print passwords, tokens, cookies, account identifiers, databases,
+raw account payloads, statements or backup archives. Existing INFO logs may
+include usernames: inspect and redact them before sharing.
 
-- **The average-vs-maximum problem has a clean answer on this path.**
-  `isAverageDemandRate` states which quantity the plan bills. On a peak plan
-  the billed figure is `highDemandInfoList.onPeakHighDemand` directly. On an
-  average plan SRP publishes no field for it, and it is reconstructed as the
-  mean of `dailyDemandList` over the cycle's **weekdays** -- including weekend
-  zeros halves the answer. Reconstruction gave 5.62 kW against the portal's
-  printed 5.60; the residual is daily figures being published to one decimal.
-  Prefer the scraped figure when you have both.
-- **Cloudflare fronts the portal.** A default Playwright browser gets "Access
-  Denied" with a Ray ID before SRP serves any markup. `USER_AGENT` and
-  `_STEALTH_INIT_SCRIPT` in `client.py` exist solely to get past that. If
-  fetches start failing wholesale, bump the Chrome version in `USER_AGENT`
-  first — a stale one is the usual trigger.
-- **The login page ships two copies of the form**, one visible and one hidden
-  (`#username_desktop` vs `#txtUserName`). `_fill_first` requires visibility,
-  because filling a hidden field succeeds silently and submits an empty form.
-- **The export follows whichever chart is on screen.** `_select_chart` must run
-  before any export, and it *refuses* rather than exporting an unconfirmed
-  chart — a mislabelled download is worse than a failed one.
-- **Demand is half-hourly and in kW**; usage, generation and net are hourly and
-  in kWh. A day of demand is 48 rows, the others 24.
-- **Only the hourly view has a date-range picker.** The daily exports give you
-  whatever window the portal shows (~31 days). To reach further back, use
-  `hourly --start/--end`. Long ranges are chunked into 31-day windows because
-  SRP renders every interval before it will export, and a multi-month request
-  times out.
-- **Arizona has no daylight saving**, which is the only reason interval
-  timestamps can be naive local time with no ambiguous hours.
+The HA client uses a private session/cookie jar. Preserve its bounded session
+repair and anti-forgery token handling. Only an explicit `invalid_grant` response
+on `login/authorize` establishes rejected credentials; a data-endpoint 401 is a
+session problem, and an unexplained error or Cloudflare 403 is not proof of a bad
+password. Do not disable CSRF, TLS/SSH verification, protection mode or access
+checks. Do not recommend stealth changes, rotating clients/hosts or repeated
+logins to get around a challenge. Stop and report CAPTCHA/MFA/Cloudflare access
+blocks; use only an authorized supported authentication path.
 
-## Credentials
+Documentation or offline review does not authorize live logins, account changes,
+timer/service changes, imports, reloads or device control. The shipped systemd
+user timer template runs daily at 07:30 with jitter; its `SuccessExitStatus=0 1`
+allows a failed scrape without flapping. Check actual installation separately.
+Do not enable linger or change host privileges as a documentation cleanup.
 
-Credentials live in `.env` (gitignored; keep it mode 600) and are read only by
-`config.py`. The password is never written to the database, the logs or any API
-response. The username *is* logged at INFO on login (`logging in to SRP as
-<username>`), which is deliberate -- it is the fastest way to tell "wrong
-account" from "broken selector" -- but it means a pasted log is not anonymous.
+## Validation
 
-A login failure that looks like a scraper bug is usually a credentials bug:
-check `.env` actually holds real values rather than placeholders before you go
-hunting for a broken selector.
+Use the current tests rather than old household snapshots:
 
-MFA is unsupported. If the account enables it, this tool stops working and
-there is no fix short of a manual session hand-off.
+- `test_component_parity.py`: equivalent package/component parsing.
+- `test_jsonapi.py`, `test_storage.py`, `test_api.py`: mapping, persistence and API quantities.
+- `test_ha_session_recovery.py`: auth/session and reauthentication guards.
+- `test_ha_statistics_restatements.py`: exact-hour revisions and cumulative tails.
+- `test_demand_audit.py`, `test_options_flow.py`: coverage, hashes, plan binding and options/reload.
 
-## Scheduling
-
-A systemd **user** timer (`deploy/srp-fetch.{service,timer}`, installed to
-`~/.config/systemd/user/`) runs `fetch` then `hourly --days 2 --series …` daily
-at 07:30 + jitter. `loginctl enable-linger` is required, or the timer only runs
-while that user has an active login session.
-
-`SuccessExitStatus=0 1` is deliberate: a scrape against someone else's website
-will fail occasionally, and a timer that quietly retries tomorrow beats a unit
-that flaps.
-
-```bash
-systemctl --user list-timers srp-fetch.timer
-journalctl --user -u srp-fetch.service
-```
-
-## Verifying a change
-
-The test suite runs on synthetic fixtures with no network — necessary but not
-sufficient. **A green suite does not mean the scraper works.** Every one of the
-three bugs above passed the tests.
-
-To actually verify, run against the live site and compare to
-<https://myaccount.srpnet.com/power/myaccount/usage> by eye:
-
-```bash
-.venv/bin/srp-energy-monitor fetch
-.venv/bin/srp-energy-monitor show --days 7
-```
-
-When a selector breaks, `--show-browser` runs headed and the failure is usually
-obvious in one glance.
-
-## Database
-
-SQLite at `data/srp.db`, currently **schema v4**. `Store._migrate` carries v1
-forward; bump `SCHEMA_VERSION` and extend `_migrate` for anything further.
-
-Everything upserts, so re-running a fetch corrects history rather than
-duplicating it. SRP restates recent days as meter data settles, so that
-property matters — do not "optimise" it into an insert.
-
-The two scraped scalars (demand figure, bill projection) are append-only time
-series, deliberately: watching them climb through the cycle is the point.
-
-## Where this came from
-
-A focused rewrite of the SRP half of an older personal project that mixed SRP
-scraping with EG4 inverter and Enphase solar polling in a single ~3,000-line
-Flask app. The SRP logic — login flow, selector cascades, CSV export sequence —
-was carried over and hardened here; everything inverter-specific was left
-behind.
-
-That history is why the scraper is more defensive than its size suggests: most
-of the selector cascades are scar tissue from the original.
+Run relevant tests and Ruff; full suites go through `jeremy-heavy`. Inspect
+`git diff --check` and task-owned changes before shipping. A green offline suite
+does not prove live collection, a deployed options form, actual enrollment,
+physical measurements or invoice reconciliation. When live verification is
+authorized, bound it, preserve private evidence and compare the same quantities.
